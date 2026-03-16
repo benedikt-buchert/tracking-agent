@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .env
+tracking-reports/
+.tracking-agent-playbook.json
+.tracking-agent-session.json

@@ -1,31 +1,54 @@
+import { readFileSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { join, dirname } from "path";
+import { homedir } from "os";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, getEnvApiKey } from "@mariozechner/pi-ai";
 import type { AssistantMessage, KnownProvider } from "@mariozechner/pi-ai";
 import chalk from "chalk";
-import { allTools } from "./tools.js";
+import { allTools, createAccumulatingGetDataLayerTool, createRequestHumanInputTool } from "./tools.js";
+import type { EventSchema } from "./schema.js";
+import { discoverEventSchemas } from "./schema.js";
+import { startHeadedBrowser, closeBrowser, navigateTo, captureDataLayer, mergeUniqueEvents, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
+import type { AgentSession, PlaybookStep, StepExecutor } from "./runner.js";
+
+const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../prompts");
+
+function readPrompt(name: string): string {
+  return readFileSync(join(PROMPTS_DIR, name), "utf8").trim();
+}
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
 
 export interface CliArgs {
   schemaUrl: string;
   targetUrl: string;
+  resume: boolean;
+  replay: boolean;
+  headless: boolean;
 }
 
 export interface ParsedArgs {
   schemaUrl?: string;
   targetUrl?: string;
+  resume: boolean;
+  replay: boolean;
+  headless: boolean;
   help: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  if (argv.includes("--help") || argv.includes("-h")) return { help: true };
+  if (argv.includes("--help") || argv.includes("-h")) return { help: true, resume: false, replay: false, headless: false };
   const args: Record<string, string> = {};
   for (let i = 0; i < argv.length - 1; i++) {
     if (argv[i] === "--schema") args["schema"] = argv[i + 1];
     if (argv[i] === "--url") args["url"] = argv[i + 1];
   }
-  return { schemaUrl: args["schema"], targetUrl: args["url"], help: false };
+  const resume = argv.includes("--resume");
+  const replay = argv.includes("--replay");
+  const headless = argv.includes("--headless");
+  return { schemaUrl: args["schema"], targetUrl: args["url"], resume, replay, headless, help: false };
 }
 
 export function printHelp(): void {
@@ -37,17 +60,26 @@ export function printHelp(): void {
     chalk.bold("  Options\n") +
     `    ${chalk.cyan("--schema")}  URL of the JSON Schema to validate against\n` +
     `    ${chalk.cyan("--url")}     URL of the website to test\n` +
-    `    ${chalk.cyan("--help")}    Show this help message\n\n` +
+    `    ${chalk.cyan("--resume")}  Resume a previous session from .tracking-agent-session.json\n` +
+    `    ${chalk.cyan("--replay")}    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)\n` +
+    `    ${chalk.cyan("--headless")}  Run the browser in the background (no visible window)\n` +
+    `    ${chalk.cyan("--help")}      Show this help message\n\n` +
     chalk.bold("  Environment\n") +
-    `    ${chalk.cyan("MODEL_PROVIDER")}  AI provider (default: anthropic)\n` +
-    `    ${chalk.cyan("MODEL_ID")}        Model ID (default: claude-opus-4-6)\n` +
-    `    ${chalk.cyan("ANTHROPIC_API_KEY")} / ${chalk.cyan("OPENAI_API_KEY")}\n\n`
+    `    ${chalk.cyan("MODEL_PROVIDER")}         AI provider (default: anthropic)\n` +
+    `    ${chalk.cyan("MODEL_ID")}               Model ID (default: claude-opus-4-6)\n` +
+    `    ${chalk.cyan("ANTHROPIC_API_KEY")}       For anthropic provider\n` +
+    `    ${chalk.cyan("OPENAI_API_KEY")}          For openai provider\n` +
+    `    ${chalk.cyan("GOOGLE_CLOUD_PROJECT")}    For google-vertex provider\n` +
+    `    ${chalk.cyan("GOOGLE_CLOUD_LOCATION")}   For google-vertex provider\n` +
+    chalk.dim(`    Google Vertex auth: gcloud auth application-default login\n`) +
+    `\n`
   );
 }
 
 export type PromptFn = (question: string) => Promise<string>;
+export type ReadFileFn = (path: string) => Promise<string>;
 
-export async function resolveArgs(argv: string[], prompt?: PromptFn): Promise<CliArgs | null> {
+export async function resolveArgs(argv: string[], prompt?: PromptFn, readFileFn?: ReadFileFn): Promise<CliArgs | null> {
   const parsed = parseArgs(argv);
   if (parsed.help) return null;
 
@@ -59,78 +91,67 @@ export async function resolveArgs(argv: string[], prompt?: PromptFn): Promise<Cl
     return answer.trim();
   });
 
+  const readFile: ReadFileFn = readFileFn ?? (async (p) => {
+    const { readFile: fsReadFile } = await import("fs/promises");
+    return fsReadFile(p, "utf8");
+  });
+
+  // For replay/resume, load schema+url from saved files if not provided on CLI
+  if ((parsed.replay || parsed.resume) && (!parsed.schemaUrl || !parsed.targetUrl)) {
+    const savedFile = parsed.replay ? ".tracking-agent-playbook.json" : ".tracking-agent-session.json";
+    try {
+      const saved = JSON.parse(await readFile(savedFile)) as { schemaUrl?: string; targetUrl?: string };
+      const schemaUrl = parsed.schemaUrl ?? saved.schemaUrl ?? await ask(chalk.cyan("  Schema URL: "));
+      const targetUrl = parsed.targetUrl ?? saved.targetUrl ?? await ask(chalk.cyan("  Target URL: "));
+      return { schemaUrl, targetUrl, resume: parsed.resume, replay: parsed.replay, headless: parsed.headless };
+    } catch {
+      // fall through to interactive prompt
+    }
+  }
+
+  if (parsed.headless && (!parsed.schemaUrl || !parsed.targetUrl)) {
+    process.stderr.write(chalk.red("  ✖ --headless requires --schema and --url (or a saved playbook/session file)\n\n"));
+    return null;
+  }
+
   const schemaUrl = parsed.schemaUrl ?? await ask(chalk.cyan("  Schema URL: "));
   const targetUrl = parsed.targetUrl ?? await ask(chalk.cyan("  Target URL: "));
-  return { schemaUrl, targetUrl };
+  return { schemaUrl, targetUrl, resume: parsed.resume, replay: parsed.replay, headless: parsed.headless };
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
 export function createSystemPrompt(): string {
-  return `You are a tracking validation agent. Your job is to verify that a website's
-dataLayer events conform to a JSON Schema specification.
-
-## Workflow
-
-1. **Discover all event schemas** — The schema URL is an entry point. Use fetch_schema
-   to fetch it. It will contain \`$ref\` links (relative or absolute) to individual
-   event schemas, typically inside a \`oneOf\` array. Resolve each \`$ref\` to an
-   absolute URL using the entry-point's \`$id\` or URL as the base, then fetch each
-   sub-schema with fetch_schema. Build a map of event name → absolute sub-schema URL.
-
-2. **Navigate and explore** — Use browser_navigate to open the target URL. Use
-   browser_snapshot to understand the page structure.
-
-3. **Trigger interactions** — Click buttons, links, fill forms, and navigate between
-   pages to trigger tracking events. Use browser_find, browser_click, browser_fill
-   as needed. After each meaningful interaction, capture the dataLayer.
-
-4. **Capture dataLayer events** — Use get_datalayer (with from_index to get only new
-   events since your last capture) to read window.dataLayer after each interaction.
-
-5. **Validate each event** — For every captured dataLayer event, look up its event
-   name in your map and call validate_event with the event object and that event's
-   specific sub-schema URL. If no specific sub-schema matches, fall back to the
-   entry-point URL. Record whether it passed or failed.
-
-6. **Report results** — When you have covered the main user interactions, produce a
-   structured summary:
-   - Total events captured
-   - Events that passed validation (with event name and sub-schema used)
-   - Events that failed validation (with event name and specific errors)
-   - Any expected event types from the schemas that were NOT observed
-   - Recommendations for fixing failures
-
-## Rules
-
-- Always resolve \`$ref\` values to absolute URLs before calling fetch_schema or
-  validate_event. A relative ref like \`./web/purchase-event.json\` with base
-  \`https://example.com/schemas/1.3.0/event-reference.json\` resolves to
-  \`https://example.com/schemas/1.3.0/web/purchase-event.json\`.
-- Always call get_datalayer with from_index set to the length of events you have
-  already captured, so you only see new events.
-- Validate EVERY event you capture — do not skip any.
-- If the validator server is unreachable, note it and continue capturing events;
-  report the raw events at the end so the user can validate manually.
-- Be thorough: test page loads, clicks, form submissions, and navigation.`;
+  return readPrompt("system.md");
 }
 
-export function buildInitialPrompt(schemaUrl: string, targetUrl: string): string {
-  return `Please validate the tracking implementation on the following website.
-
-Schema entry point: ${schemaUrl}
-Target URL:         ${targetUrl}
-
-Start by fetching the entry-point schema and discovering all linked sub-schemas
-(\`$ref\` entries in the \`oneOf\`). Resolve each to an absolute URL and fetch it
-so you understand every expected event type. Then navigate the website, trigger
-interactions, capture dataLayer events, and validate each event against its
-specific sub-schema URL.`;
+export function buildInitialPrompt(schemaUrl: string, targetUrl: string, eventSchemas: EventSchema[]): string {
+  const schemasText = eventSchemas
+    .map((s) => `- ${s.eventName}${s.description ? ` — ${s.description}` : ""}\n  Schema: ${s.schemaUrl}`)
+    .join("\n");
+  return readPrompt("initial.md")
+    .replace("{{schemaUrl}}", schemaUrl)
+    .replace("{{targetUrl}}", targetUrl)
+    .replace("{{eventSchemas}}", schemasText);
 }
 
 // ─── Console event handler ────────────────────────────────────────────────────
 
 type WriteFn = (s: string) => void;
+
+function toolArgSummary(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case "browser_navigate": return String(args["url"] ?? "");
+    case "browser_click": return String(args["selector"] ?? args["text"] ?? "");
+    case "browser_fill": return `${String(args["selector"] ?? "")} = "${String(args["value"] ?? args["text"] ?? "")}"`;
+    case "browser_find": return `${String(args["locator"] ?? "")} "${String(args["value"] ?? "")}"`;
+    case "browser_eval": return String(args["expression"] ?? args["js"] ?? "").slice(0, 60);
+    case "browser_wait": return String(args["condition"] ?? args["ms"] ?? "");
+    case "get_datalayer": return `from index ${String(args["from_index"] ?? 0)}`;
+    case "request_human_input": return String(args["message"] ?? "").slice(0, 80);
+    default: return "";
+  }
+}
 
 export function createConsoleHandler(
   write: WriteFn = (s) => { process.stdout.write(s); },
@@ -144,7 +165,9 @@ export function createConsoleHandler(
       }
     }
     if (event.type === "tool_execution_start") {
-      writeErr(chalk.dim(`\n  ${chalk.cyan("▶")} ${event.toolName}\n`));
+      const args = event.args as Record<string, unknown>;
+      const detail = toolArgSummary(event.toolName, args);
+      writeErr(chalk.dim(`\n  ${chalk.cyan("▶")} ${event.toolName}${detail ? chalk.dim(` — ${detail}`) : ""}\n`));
     }
     if (event.type === "turn_end" && (event.message as AssistantMessage).stopReason === "error") {
       const msg = (event.message as AssistantMessage).errorMessage ?? "Unknown error";
@@ -172,21 +195,61 @@ export function resolveModel() {
   return getModel(provider, id);
 }
 
+function hasVertexAdcCredentials(): boolean {
+  const gacPath = process.env["GOOGLE_APPLICATION_CREDENTIALS"];
+  if (gacPath) return existsSync(gacPath);
+  return existsSync(join(homedir(), ".config", "gcloud", "application_default_credentials.json"));
+}
+
 export function checkApiKey(): void {
   const provider = process.env["MODEL_PROVIDER"] ?? "anthropic";
-  const keyVar = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
-  if (!process.env[keyVar]) {
+
+  if (provider === "google-vertex") {
+    const hasCredentials = process.env["GOOGLE_CLOUD_API_KEY"] ? true : hasVertexAdcCredentials();
+    const hasProject = !!(process.env["GOOGLE_CLOUD_PROJECT"] ?? process.env["GCLOUD_PROJECT"]);
+    const hasLocation = !!process.env["GOOGLE_CLOUD_LOCATION"];
+    if (hasCredentials && hasProject && hasLocation) return;
+
+    const missing: string[] = [];
+    if (!hasProject) missing.push("GOOGLE_CLOUD_PROJECT");
+    if (!hasLocation) missing.push("GOOGLE_CLOUD_LOCATION");
     process.stderr.write(
-      chalk.red(`\n✖ Missing ${keyVar} environment variable.\n`) +
-      chalk.dim(`  Set it in your shell or in a .env file and run via: npm run dev\n\n`)
+      chalk.red(`\n✖ Google Vertex AI is not fully configured.\n`) +
+      (missing.length > 0
+        ? chalk.dim(`  Missing env vars: ${missing.join(", ")}\n`)
+        : chalk.dim(`  ADC credentials not found.\n`)) +
+      chalk.dim(`  Run: gcloud auth application-default login\n`) +
+      chalk.dim(`  Then set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION in your .env\n\n`)
     );
     process.exit(1);
   }
+
+  const key = getEnvApiKey(provider);
+  if (key) return;
+
+  const keyVarMap: Record<string, string> = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    google: "GEMINI_API_KEY",
+    groq: "GROQ_API_KEY",
+    xai: "XAI_API_KEY",
+  };
+  const keyVar = keyVarMap[provider] ?? `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+  process.stderr.write(
+    chalk.red(`\n✖ Missing ${keyVar} environment variable.\n`) +
+    chalk.dim(`  Set it in your shell or in a .env file.\n\n`)
+  );
+  process.exit(1);
 }
 
 export function createAgent(): Agent {
   const agent = new Agent({
-    getApiKey: (provider) => getEnvApiKey(provider),
+    // For google-vertex with ADC, return undefined so pi-ai uses project/location + ADC
+    // rather than treating the "<authenticated>" sentinel as a literal API key.
+    getApiKey: (provider) => {
+      const key = getEnvApiKey(provider);
+      return key === "<authenticated>" ? undefined : key;
+    },
   });
   agent.setModel(resolveModel());
   agent.setSystemPrompt(createSystemPrompt());
@@ -194,7 +257,56 @@ export function createAgent(): Agent {
   return agent;
 }
 
+// ─── buildAgentTools ──────────────────────────────────────────────────────────
+
+export function buildAgentTools(
+  accumulatedEvents: unknown[],
+  headless: boolean,
+): { tools: typeof allTools } {
+  const accumulatingDataLayerTool = createAccumulatingGetDataLayerTool(accumulatedEvents);
+  const headlessHumanInputTool = headless
+    ? createRequestHumanInputTool(() => Promise.resolve(""), () => {})
+    : null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tools = allTools.map((t) => {
+    if (t.name === "get_datalayer") return accumulatingDataLayerTool;
+    if (headlessHumanInputTool && t.name === "request_human_input") return headlessHumanInputTool;
+    return t;
+  }) as typeof allTools;
+  return { tools };
+}
+
+// ─── collectAgentText ─────────────────────────────────────────────────────────
+
+export async function collectAgentText(agent: Agent, prompt: string): Promise<string> {
+  let text = "";
+  agent.subscribe((event: AgentEvent) => {
+    if (event.type === "message_update") {
+      const ame = event.assistantMessageEvent;
+      if (ame.type === "text_delta") text += ame.delta;
+    }
+  });
+  await agent.prompt(prompt).catch(() => {});
+  return text;
+}
+
+// ─── Step executor for replay ─────────────────────────────────────────────────
+
+function makeStepExecutor(tools: typeof allTools): StepExecutor {
+  return async (step: PlaybookStep) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tool = tools.find((t) => t.name === step.tool) as any;
+    if (!tool) return `Error: unknown tool ${step.tool}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await tool.execute("replay", step.args as any);
+    return (result.content[0] as { text: string }).text ?? "";
+  };
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
+
+const SESSION_FILE = ".tracking-agent-session.json";
+const PLAYBOOK_FILE = ".tracking-agent-playbook.json";
 
 export async function main(): Promise<void> {
   const args = await resolveArgs(process.argv.slice(2));
@@ -204,17 +316,179 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const { schemaUrl, targetUrl } = args;
+  const { schemaUrl, targetUrl, resume, replay, headless } = args;
 
   checkApiKey();
 
+  const mode = replay ? "replay" : resume ? "resume" : "fresh";
   process.stderr.write(
     chalk.bold("\n  Tracking Agent\n") +
-    chalk.dim(`  Schema: ${schemaUrl}\n  Target: ${targetUrl}\n\n`)
+    chalk.dim(`  Schema: ${schemaUrl}\n  Target: ${targetUrl}\n`) +
+    (mode !== "fresh" ? chalk.dim(`  Mode: ${mode}\n`) : "") +
+    (headless ? chalk.dim(`  Browser: headless\n`) : "") +
+    "\n"
   );
 
-  const agent = createAgent();
-  agent.subscribe(createConsoleHandler());
-  await agent.prompt(buildInitialPrompt(schemaUrl, targetUrl));
+  // Step 1: Discover schemas (code) — or restore from session on resume
+  let eventSchemas: EventSchema[];
+  let savedMessages: unknown[] = [];
+
+  if (resume) {
+    process.stderr.write(chalk.dim(`  Loading session from ${SESSION_FILE}...\n`));
+    const session = await loadSession(SESSION_FILE);
+    eventSchemas = session.eventSchemas;
+    savedMessages = session.messages;
+    process.stderr.write(chalk.dim(`  Restored ${eventSchemas.length} schema(s), ${savedMessages.length} messages\n\n`));
+  } else {
+    process.stderr.write(chalk.dim(`  Discovering schemas from ${schemaUrl}...\n`));
+    eventSchemas = await discoverEventSchemas(schemaUrl, "web-datalayer-js");
+    process.stderr.write(chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`));
+  }
+
+  // Step 2: Start browser and navigate
+  if (headless) {
+    delete process.env["AGENT_BROWSER_HEADED"];
+    process.stderr.write(chalk.dim(`  Starting headless browser...\n`));
+  } else {
+    await startHeadedBrowser();
+    process.stderr.write(chalk.dim(`  Starting headed browser...\n`));
+  }
+  process.stderr.write(chalk.dim(`  Opening ${targetUrl}...\n\n`));
+  await navigateTo(targetUrl);
+
+  // Accumulator — collects all dataLayer events seen via get_datalayer across all pages
+  const accumulatedEvents: unknown[] = [];
+  // In headless mode request_human_input auto-continues; accumulating tool tracks all events
+  const { tools: agentTools } = buildAgentTools(accumulatedEvents, headless);
+
+  // Step 3a: Replay mode — execute recorded steps deterministically, fall back to agent if stuck
+  if (replay) {
+    process.stderr.write(chalk.dim(`  Loading playbook from ${PLAYBOOK_FILE}...\n`));
+    const playbook = await loadPlaybook(PLAYBOOK_FILE);
+    process.stderr.write(chalk.dim(`  Replaying ${playbook.steps.length} step(s)...\n\n`));
+
+    const executor = makeStepExecutor(agentTools);
+    const { stuckAtIndex } = await replayPlaybook(playbook.steps, executor);
+
+    if (stuckAtIndex === -1) {
+      process.stderr.write(chalk.dim(`\n  Replay complete — all steps succeeded, skipping agent.\n\n`));
+    } else {
+      const stuckStep = playbook.steps[stuckAtIndex];
+      process.stderr.write(chalk.yellow(
+        `\n  Replay stuck at step ${stuckAtIndex} (${stuckStep.tool}). Falling back to agent...\n\n`
+      ));
+      const agent = createAgent();
+      agent.setTools(agentTools);
+      const agentSteps: PlaybookStep[] = [];
+      let recording = true;
+
+      agent.subscribe((event) => {
+        if (recording && event.type === "tool_execution_start" && isActionTool(event.toolName)) {
+          agentSteps.push({ tool: event.toolName, args: event.args as Record<string, unknown> });
+        }
+      });
+      agent.subscribe(async (event) => {
+        if (event.type === "turn_end") {
+          const session: AgentSession = { schemaUrl, targetUrl, eventSchemas, messages: agent.state.messages };
+          await saveSession(SESSION_FILE, session).catch(() => { /* non-fatal */ });
+        }
+      });
+      agent.subscribe(createConsoleHandler());
+      await agent.prompt(
+        `Replay got stuck at step ${stuckAtIndex} (${stuckStep.tool} — ${JSON.stringify(stuckStep.args)}). ` +
+        `The browser is currently open. Please continue exploring to trigger any remaining expected events.\n\n` +
+        buildInitialPrompt(schemaUrl, targetUrl, eventSchemas)
+      );
+
+      // Update the playbook so it works next time: successful replay steps + agent's recovery steps
+      if (agentSteps.length > 0) {
+        recording = false;
+        process.stderr.write(chalk.dim(`\n  Asking agent to optimize updated playbook...\n`));
+
+        const combinedSteps = [...playbook.steps.slice(0, stuckAtIndex), ...agentSteps];
+        const rewriteText = await collectAgentText(
+          agent,
+          `The replay broke at step ${stuckAtIndex} and you recovered. ` +
+          `Here are the combined steps (successful replay + your recovery):\n\n` +
+          `\`\`\`json\n${JSON.stringify(combinedSteps, null, 2)}\n\`\`\`\n\n` +
+          readPrompt("rewrite-playbook.md")
+        );
+        const optimizedSteps = extractPlaybookSteps(rewriteText);
+        const stepsToSave = optimizedSteps ?? combinedSteps;
+        const source = optimizedSteps ? "optimized" : "combined";
+        await savePlaybook(PLAYBOOK_FILE, { schemaUrl, targetUrl, steps: stepsToSave }).catch(() => { /* non-fatal */ });
+        process.stderr.write(chalk.dim(`  Playbook updated (${stepsToSave.length} step(s), ${source}) — replay should work next time\n`));
+      }
+    }
+  } else {
+    // Step 3b: Fresh / resume — run the LLM agent, record all action steps
+    const agent = createAgent();
+    agent.setTools(agentTools);
+    const recordedSteps: PlaybookStep[] = [];
+    let recording = true;
+
+    agent.subscribe((event) => {
+      if (recording && event.type === "tool_execution_start" && isActionTool(event.toolName)) {
+        recordedSteps.push({ tool: event.toolName, args: event.args as Record<string, unknown> });
+      }
+    });
+    agent.subscribe(async (event) => {
+      if (event.type === "turn_end") {
+        const session: AgentSession = { schemaUrl, targetUrl, eventSchemas, messages: agent.state.messages };
+        await saveSession(SESSION_FILE, session).catch(() => { /* non-fatal */ });
+      }
+    });
+    agent.subscribe(createConsoleHandler());
+
+    if (resume && savedMessages.length > 0) {
+      agent.replaceMessages(savedMessages as Parameters<typeof agent.replaceMessages>[0]);
+      await agent.prompt(
+        `You are resuming a previous session. The browser has been re-opened at ${targetUrl}. ` +
+        `Continue exploring to trigger any remaining expected events that you haven't covered yet.`
+      );
+    } else {
+      await agent.prompt(buildInitialPrompt(schemaUrl, targetUrl, eventSchemas));
+    }
+
+    // Ask the agent to rewrite a clean minimal playbook after a fresh session
+    if (!resume && recordedSteps.length > 0) {
+      recording = false;
+      process.stderr.write(chalk.dim(`\n  Asking agent to optimize playbook...\n`));
+
+      const rewriteText = await collectAgentText(agent, readPrompt("rewrite-playbook.md"));
+      const optimizedSteps = extractPlaybookSteps(rewriteText);
+      const stepsToSave = optimizedSteps ?? recordedSteps;
+      const source = optimizedSteps ? "optimized" : "raw";
+
+      await savePlaybook(PLAYBOOK_FILE, { schemaUrl, targetUrl, steps: stepsToSave }).catch(() => { /* non-fatal */ });
+      process.stderr.write(chalk.dim(`  Playbook saved (${stepsToSave.length} step(s), ${source}) → use --replay to replay\n`));
+    }
+  }
+
+  // Step 4: Combine accumulated events (from agent's get_datalayer calls across all pages)
+  // with a final capture of the current page in case the agent missed anything.
+  process.stderr.write(chalk.dim(`\n  Capturing dataLayer events...\n`));
+  const finalPageEvents = await captureDataLayer(0);
+  const events = mergeUniqueEvents(accumulatedEvents, finalPageEvents);
+  process.stderr.write(chalk.dim(`  Captured ${events.length} event(s) (${accumulatedEvents.length} accumulated + ${finalPageEvents.length} on final page)\n\n`));
+
+  // Step 5: Validate all events (code)
+  process.stderr.write(chalk.dim(`  Validating events...\n`));
+  const results = await validateAll(events, eventSchemas, schemaUrl);
+
+  // Step 6: Generate and print report (code)
+  const expectedNames = eventSchemas.map((s) => s.eventName);
+  const report = generateReport(results, expectedNames, events, eventSchemas);
+  process.stdout.write(report);
+
+  // Step 7: Save report folder
+  const reportDir = await saveReportFolder("tracking-reports", events, results, expectedNames, report)
+    .catch(() => null);
+  if (reportDir) {
+    process.stderr.write(chalk.dim(`  Report saved → ${reportDir}\n\n`));
+  }
+
+  // Step 8: Close the browser
+  await closeBrowser();
 }
 

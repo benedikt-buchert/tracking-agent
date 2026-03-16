@@ -1,20 +1,7 @@
-import { exec } from "child_process";
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-
-const VALIDATOR_BASE_URL = process.env.VALIDATOR_URL ?? "http://localhost:3000";
-
-async function runBrowser(args: string): Promise<string> {
-  return new Promise((resolve) => {
-    exec(`agent-browser ${args}`, { timeout: 30_000 }, (err, stdout, stderr) => {
-      if (err) {
-        resolve(err.stdout?.trim() || err.stderr?.trim() || err.message);
-      } else {
-        resolve(stdout?.trim() || stderr?.trim() || "");
-      }
-    });
-  });
-}
+import { defaultBrowserFn } from "./runner.js";
+import type { BrowserFn } from "./runner.js";
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} };
@@ -26,19 +13,23 @@ const NavigateParams = Type.Object({
   url: Type.String({ description: "Full URL to navigate to" }),
 });
 
-export const navigateTool: AgentTool<typeof NavigateParams> = {
-  name: "browser_navigate",
-  description:
-    "Open a URL in the browser. Wait for the page to be idle after navigation.",
-  label: "Navigating browser",
-  parameters: NavigateParams,
-  execute: async (_id, { url }) => {
-    const out = await runBrowser(
-      `open "${url}" && agent-browser wait --load networkidle`
-    );
-    return textResult(out || "Navigated successfully");
-  },
-};
+export function createNavigateTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof NavigateParams> {
+  return {
+    name: "browser_navigate",
+    description:
+      "Open a URL in the browser. Wait for the page to be idle after navigation.",
+    label: "Navigating browser",
+    parameters: NavigateParams,
+    execute: async (_id, { url }) => {
+      const out = await browserFn(
+        `open "${url}" && agent-browser wait --load networkidle`
+      );
+      return textResult(out || "Navigated successfully");
+    },
+  };
+}
+
+export const navigateTool = createNavigateTool();
 
 // ─── Tool: snapshot ───────────────────────────────────────────────────────────
 
@@ -51,18 +42,22 @@ const SnapshotParams = Type.Object({
   ),
 });
 
-export const snapshotTool: AgentTool<typeof SnapshotParams> = {
-  name: "browser_snapshot",
-  description:
-    "Get the accessibility tree of the current page. Returns element refs (e.g. @e1, @e2) that you can use with other tools.",
-  label: "Taking snapshot",
-  parameters: SnapshotParams,
-  execute: async (_id, { interactive_only }) => {
-    const flag = interactive_only ? " -i" : "";
-    const out = await runBrowser(`snapshot${flag}`);
-    return textResult(out);
-  },
-};
+export function createSnapshotTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof SnapshotParams> {
+  return {
+    name: "browser_snapshot",
+    description:
+      "Get the accessibility tree of the current page. Returns element refs (e.g. @e1, @e2) that you can use with other tools.",
+    label: "Taking snapshot",
+    parameters: SnapshotParams,
+    execute: async (_id, { interactive_only }) => {
+      const flag = interactive_only ? " -i" : "";
+      const out = await browserFn(`snapshot${flag}`);
+      return textResult(out);
+    },
+  };
+}
+
+export const snapshotTool = createSnapshotTool();
 
 // ─── Tool: click ─────────────────────────────────────────────────────────────
 
@@ -73,16 +68,20 @@ const ClickParams = Type.Object({
   }),
 });
 
-export const clickTool: AgentTool<typeof ClickParams> = {
-  name: "browser_click",
-  description: "Click an element on the page.",
-  label: "Clicking element",
-  parameters: ClickParams,
-  execute: async (_id, { selector }) => {
-    const out = await runBrowser(`click "${selector}"`);
-    return textResult(out || "Clicked");
-  },
-};
+export function createClickTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof ClickParams> {
+  return {
+    name: "browser_click",
+    description: "Click an element on the page.",
+    label: "Clicking element",
+    parameters: ClickParams,
+    execute: async (_id, { selector }) => {
+      const out = await browserFn(`click "${selector}"`);
+      return textResult(out || "Clicked");
+    },
+  };
+}
+
+export const clickTool = createClickTool();
 
 // ─── Tool: fill ───────────────────────────────────────────────────────────────
 
@@ -91,16 +90,20 @@ const FillParams = Type.Object({
   text: Type.String({ description: "Text to fill into the element" }),
 });
 
-export const fillTool: AgentTool<typeof FillParams> = {
-  name: "browser_fill",
-  description: "Clear and fill a form field with text.",
-  label: "Filling input",
-  parameters: FillParams,
-  execute: async (_id, { selector, text }) => {
-    const out = await runBrowser(`fill "${selector}" "${text}"`);
-    return textResult(out || "Filled");
-  },
-};
+export function createFillTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof FillParams> {
+  return {
+    name: "browser_fill",
+    description: "Clear and fill a form field with text.",
+    label: "Filling input",
+    parameters: FillParams,
+    execute: async (_id, { selector, text }) => {
+      const out = await browserFn(`fill "${selector}" "${text}"`);
+      return textResult(out || "Filled");
+    },
+  };
+}
+
+export const fillTool = createFillTool();
 
 // ─── Tool: eval ───────────────────────────────────────────────────────────────
 
@@ -110,18 +113,22 @@ const EvalParams = Type.Object({
   }),
 });
 
-export const evalTool: AgentTool<typeof EvalParams> = {
-  name: "browser_eval",
-  description:
-    "Run JavaScript in the browser and return the result as a string.",
-  label: "Running JS",
-  parameters: EvalParams,
-  execute: async (_id, { js }) => {
-    const escaped = js.replace(/'/g, `'\\''`);
-    const out = await runBrowser(`eval '${escaped}'`);
-    return textResult(out);
-  },
-};
+export function createEvalTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof EvalParams> {
+  return {
+    name: "browser_eval",
+    description:
+      "Run JavaScript in the browser and return the result as a string.",
+    label: "Running JS",
+    parameters: EvalParams,
+    execute: async (_id, { js }) => {
+      const escaped = js.replace(/'/g, `'\\''`);
+      const out = await browserFn(`eval '${escaped}'`);
+      return textResult(out);
+    },
+  };
+}
+
+export const evalTool = createEvalTool();
 
 // ─── Tool: screenshot ────────────────────────────────────────────────────────
 
@@ -131,17 +138,21 @@ const ScreenshotParams = Type.Object({
   ),
 });
 
-export const screenshotTool: AgentTool<typeof ScreenshotParams> = {
-  name: "browser_screenshot",
-  description: "Take a screenshot of the current page.",
-  label: "Taking screenshot",
-  parameters: ScreenshotParams,
-  execute: async (_id, { path }) => {
-    const arg = path ? ` "${path}"` : "";
-    const out = await runBrowser(`screenshot${arg}`);
-    return textResult(out || "Screenshot taken");
-  },
-};
+export function createScreenshotTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof ScreenshotParams> {
+  return {
+    name: "browser_screenshot",
+    description: "Take a screenshot of the current page.",
+    label: "Taking screenshot",
+    parameters: ScreenshotParams,
+    execute: async (_id, { path }) => {
+      const arg = path ? ` "${path}"` : "";
+      const out = await browserFn(`screenshot${arg}`);
+      return textResult(out || "Screenshot taken");
+    },
+  };
+}
+
+export const screenshotTool = createScreenshotTool();
 
 // ─── Tool: wait ───────────────────────────────────────────────────────────────
 
@@ -152,16 +163,20 @@ const WaitParams = Type.Object({
   }),
 });
 
-export const waitTool: AgentTool<typeof WaitParams> = {
-  name: "browser_wait",
-  description: "Wait for an element to appear, a condition, or a time period.",
-  label: "Waiting",
-  parameters: WaitParams,
-  execute: async (_id, { target }) => {
-    const out = await runBrowser(`wait ${target}`);
-    return textResult(out || "Wait complete");
-  },
-};
+export function createWaitTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof WaitParams> {
+  return {
+    name: "browser_wait",
+    description: "Wait for an element to appear, a condition, or a time period.",
+    label: "Waiting",
+    parameters: WaitParams,
+    execute: async (_id, { target }) => {
+      const out = await browserFn(`wait ${target}`);
+      return textResult(out || "Wait complete");
+    },
+  };
+}
+
+export const waitTool = createWaitTool();
 
 // ─── Tool: get_datalayer ─────────────────────────────────────────────────────
 
@@ -174,88 +189,92 @@ const GetDataLayerParams = Type.Object({
   ),
 });
 
-export const getDataLayerTool: AgentTool<typeof GetDataLayerParams> = {
-  name: "get_datalayer",
-  description:
-    "Get the current contents of window.dataLayer from the browser. Returns JSON array of all dataLayer pushes.",
-  label: "Reading dataLayer",
-  parameters: GetDataLayerParams,
-  execute: async (_id, { from_index }) => {
-    const idx = from_index ?? 0;
-    const js = `JSON.stringify((window.dataLayer || []).slice(${idx}))`;
-    const escaped = js.replace(/'/g, `'\\''`);
-    const out = await runBrowser(`eval '${escaped}'`);
-    return textResult(out || "[]");
-  },
-};
-
-// ─── Tool: fetch_schema ───────────────────────────────────────────────────────
-
-const FetchSchemaParams = Type.Object({
-  url: Type.String({ description: "URL of the JSON Schema to fetch" }),
-});
-
-export const fetchSchemaTool: AgentTool<typeof FetchSchemaParams> = {
-  name: "fetch_schema",
-  description:
-    "Fetch a JSON Schema from a URL and return its contents. Use this to understand the expected tracking event structure.",
-  label: "Fetching schema",
-  parameters: FetchSchemaParams,
-  execute: async (_id, { url }) => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) {
-        return textResult(`Error fetching schema: HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      return textResult(JSON.stringify(json, null, 2));
-    } catch (err) {
-      return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  },
-};
-
-// ─── Tool: validate_event ────────────────────────────────────────────────────
-
-const ValidateEventParams = Type.Object({
-  event: Type.Object(
-    {},
-    {
-      description:
-        "The dataLayer event object to validate (as a JSON object)",
-      additionalProperties: true,
-    }
-  ),
-  schema_url: Type.String({
+export function createGetDataLayerTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof GetDataLayerParams> {
+  return {
+    name: "get_datalayer",
     description:
-      "URL of the JSON Schema to validate against (e.g. https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json)",
+      "Get the current contents of window.dataLayer from the browser. Returns JSON array of all dataLayer pushes.",
+    label: "Reading dataLayer",
+    parameters: GetDataLayerParams,
+    execute: async (_id, { from_index }) => {
+      const idx = from_index ?? 0;
+      const js = `JSON.stringify((window.dataLayer || []).slice(${idx}))`;
+      const escaped = js.replace(/'/g, `'\\''`);
+      const out = await browserFn(`eval '${escaped}'`);
+      return textResult(out || "[]");
+    },
+  };
+}
+
+export const getDataLayerTool = createGetDataLayerTool();
+
+export function createAccumulatingGetDataLayerTool(
+  accumulator: unknown[],
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof GetDataLayerParams> {
+  const base = createGetDataLayerTool(browserFn);
+  return {
+    ...base,
+    execute: async (id, args) => {
+      const result = await base.execute(id, args);
+      const text = (result.content[0] as { type: string; text: string }).text || "[]";
+      try {
+        // agent-browser eval double-encodes string results — same logic as captureDataLayer
+        const parsed = JSON.parse(text);
+        const events = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+        if (Array.isArray(events)) accumulator.push(...events);
+      } catch { /* non-fatal */ }
+      return result;
+    },
+  };
+}
+
+// ─── Tool: request_human_input ───────────────────────────────────────────────
+
+type ReadLineFn = (prompt: string) => Promise<string>;
+type WriteErrFn = (s: string) => void;
+
+async function defaultReadLine(prompt: string): Promise<string> {
+  if (!process.stdin.isTTY) {
+    // Non-interactive environment — auto-continue so the agent can proceed
+    return "";
+  }
+  const { createInterface } = await import("readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const answer = await rl.question(prompt);
+  rl.close();
+  return answer;
+}
+
+const RequestHumanInputParams = Type.Object({
+  message: Type.String({
+    description: "Describe what you need the user to do in the browser (e.g. 'Please enter payment details and click Confirm').",
   }),
 });
 
-export const validateEventTool: AgentTool<typeof ValidateEventParams> = {
-  name: "validate_event",
-  description:
-    "Validate a single dataLayer event object against a JSON Schema using the tracking validator server. Returns validation result with any errors.",
-  label: "Validating event",
-  parameters: ValidateEventParams,
-  execute: async (_id, { event, schema_url }) => {
-    try {
-      const payload = { ...event, $schema: schema_url };
-      const res = await fetch(`${VALIDATOR_BASE_URL}/v1/validate/remote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await res.json();
-      return textResult(JSON.stringify(result, null, 2));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return textResult(
-        `Error contacting validator at ${VALIDATOR_BASE_URL}: ${msg}\n\nMake sure the tracking_validator server is running (npm start in the tracking_validator directory).`
-      );
-    }
-  },
-};
+export function createRequestHumanInputTool(
+  readLineFn: ReadLineFn = defaultReadLine,
+  writeErr: WriteErrFn = (s) => process.stderr.write(s),
+): AgentTool<typeof RequestHumanInputParams> {
+  return {
+    name: "request_human_input",
+    description: "Pause and ask the human to complete an action in the browser (e.g. enter payment info, solve a CAPTCHA, log in). The agent resumes after the human presses Enter.",
+    label: "Waiting for human",
+    parameters: RequestHumanInputParams,
+    execute: async (_id, { message }) => {
+      const url = await defaultBrowserFn("eval 'window.location.href'").catch(() => "");
+
+      writeErr(`\n  ⏸  Agent needs your help:\n  ${message}\n`);
+      if (url) writeErr(`  Browser is at: ${url}\n`);
+      writeErr(`  Complete the action in the browser window, then press Enter.\n`);
+
+      await readLineFn("  Press Enter when done... ");
+      return textResult("Human has completed the requested action. You may continue.");
+    },
+  };
+}
+
+export const requestHumanInputTool = createRequestHumanInputTool();
 
 // ─── Tool: find ───────────────────────────────────────────────────────────────
 
@@ -279,32 +298,42 @@ const FindParams = Type.Object({
   ),
 });
 
-export const findTool: AgentTool<typeof FindParams> = {
-  name: "browser_find",
-  description:
-    "Find an element by role, text, label, placeholder, or test ID and perform an action on it.",
-  label: "Finding element",
-  parameters: FindParams,
-  execute: async (_id, { locator, value, action, fill_text }) => {
-    const extra = action === "fill" && fill_text ? ` "${fill_text}"` : "";
-    const out = await runBrowser(
-      `find ${locator} "${value}" ${action}${extra}`
-    );
-    return textResult(out || "Done");
-  },
-};
+export function createFindTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof FindParams> {
+  return {
+    name: "browser_find",
+    description:
+      "Find an element by role, text, label, placeholder, or test ID and perform an action on it.",
+    label: "Finding element",
+    parameters: FindParams,
+    execute: async (_id, { locator, value, action, fill_text }) => {
+      const extra = action === "fill" && fill_text ? ` "${fill_text}"` : "";
+      const out = await browserFn(
+        `find ${locator} "${value}" ${action}${extra}`
+      );
+      return textResult(out || "Done");
+    },
+  };
+}
+
+export const findTool = createFindTool();
+
+// ─── createAllTools ───────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const allTools: AgentTool<any>[] = [
-  fetchSchemaTool,
-  navigateTool,
-  snapshotTool,
-  clickTool,
-  fillTool,
-  findTool,
-  evalTool,
-  waitTool,
-  getDataLayerTool,
-  screenshotTool,
-  validateEventTool,
-];
+export function createAllTools(browserFn: BrowserFn = defaultBrowserFn): AgentTool<any>[] {
+  return [
+    createNavigateTool(browserFn),
+    createSnapshotTool(browserFn),
+    createClickTool(browserFn),
+    createFillTool(browserFn),
+    createFindTool(browserFn),
+    createEvalTool(browserFn),
+    createWaitTool(browserFn),
+    createGetDataLayerTool(browserFn),
+    createScreenshotTool(browserFn),
+    requestHumanInputTool,
+  ];
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const allTools: AgentTool<any>[] = createAllTools();

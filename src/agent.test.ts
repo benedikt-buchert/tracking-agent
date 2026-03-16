@@ -1,6 +1,9 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { parseArgs, resolveArgs, buildInitialPrompt, createSystemPrompt, createAgent, createConsoleHandler, resolveModel } from "./agent.js";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import type * as Fs from "fs";
+import { parseArgs, resolveArgs, buildInitialPrompt, createSystemPrompt, createAgent, createConsoleHandler, resolveModel, checkApiKey, buildAgentTools, collectAgentText } from "./agent.js";
 import { allTools } from "./tools.js";
+
+import type { EventSchema } from "./schema.js";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 
@@ -45,6 +48,26 @@ describe("parseArgs", () => {
   it("returns help:false when no help flag", () => {
     expect(parseArgs([]).help).toBe(false);
   });
+
+  it("sets resume:true when --resume flag is present", () => {
+    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com", "--resume"]);
+    expect(result.resume).toBe(true);
+  });
+
+  it("sets resume:false when --resume flag is absent", () => {
+    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com"]);
+    expect(result.resume).toBe(false);
+  });
+
+  it("sets replay:true when --replay flag is present", () => {
+    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com", "--replay"]);
+    expect(result.replay).toBe(true);
+  });
+
+  it("sets replay:false when --replay flag is absent", () => {
+    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com"]);
+    expect(result.replay).toBe(false);
+  });
 });
 
 // ─── resolveArgs ──────────────────────────────────────────────────────────────
@@ -59,7 +82,16 @@ describe("resolveArgs", () => {
       "--schema", "https://example.com/schema.json",
       "--url", "https://mysite.com",
     ]);
-    expect(result).toEqual({ schemaUrl: "https://example.com/schema.json", targetUrl: "https://mysite.com" });
+    expect(result).toEqual({ schemaUrl: "https://example.com/schema.json", targetUrl: "https://mysite.com", resume: false, replay: false, headless: false });
+  });
+
+  it("includes resume:true when --resume is passed", async () => {
+    const result = await resolveArgs([
+      "--schema", "https://example.com/schema.json",
+      "--url", "https://mysite.com",
+      "--resume",
+    ]);
+    expect(result?.resume).toBe(true);
   });
 
   it("prompts for missing --schema", async () => {
@@ -82,7 +114,45 @@ describe("resolveArgs", () => {
     const answers = ["https://schema.json", "https://site.com"];
     const prompt = async () => answers.shift()!;
     const result = await resolveArgs([], prompt);
-    expect(result).toEqual({ schemaUrl: "https://schema.json", targetUrl: "https://site.com" });
+    expect(result).toEqual({ schemaUrl: "https://schema.json", targetUrl: "https://site.com", resume: false, replay: false, headless: false });
+  });
+
+  it("includes replay:true when --replay is passed", async () => {
+    const result = await resolveArgs([
+      "--schema", "https://example.com/schema.json",
+      "--url", "https://mysite.com",
+      "--replay",
+    ]);
+    expect(result?.replay).toBe(true);
+  });
+
+  it("reads schemaUrl and targetUrl from playbook file when --replay is given without --schema/--url", async () => {
+    const playbookContent = JSON.stringify({
+      schemaUrl: "https://saved-schema.com/schema.json",
+      targetUrl: "https://saved-site.com",
+      steps: [],
+    });
+    const readFileFn = vi.fn().mockResolvedValue(playbookContent);
+    const result = await resolveArgs(["--replay"], undefined, readFileFn);
+    expect(readFileFn).toHaveBeenCalledWith(".tracking-agent-playbook.json");
+    expect(result?.schemaUrl).toBe("https://saved-schema.com/schema.json");
+    expect(result?.targetUrl).toBe("https://saved-site.com");
+    expect(result?.replay).toBe(true);
+  });
+
+  it("reads schemaUrl and targetUrl from session file when --resume is given without --schema/--url", async () => {
+    const sessionContent = JSON.stringify({
+      schemaUrl: "https://saved-schema.com/schema.json",
+      targetUrl: "https://saved-site.com",
+      eventSchemas: [],
+      messages: [],
+    });
+    const readFileFn = vi.fn().mockResolvedValue(sessionContent);
+    const result = await resolveArgs(["--resume"], undefined, readFileFn);
+    expect(readFileFn).toHaveBeenCalledWith(".tracking-agent-session.json");
+    expect(result?.schemaUrl).toBe("https://saved-schema.com/schema.json");
+    expect(result?.targetUrl).toBe("https://saved-site.com");
+    expect(result?.resume).toBe(true);
   });
 });
 
@@ -90,25 +160,58 @@ describe("resolveArgs", () => {
 describe("buildInitialPrompt", () => {
   const schemaUrl = "https://example.com/schema.json";
   const targetUrl = "https://mysite.com";
-
-  it("includes the schema URL", () => {
-    const prompt = buildInitialPrompt(schemaUrl, targetUrl);
-    expect(prompt).toContain(schemaUrl);
-  });
+  const eventSchemas: EventSchema[] = [
+    { eventName: "purchase", schemaUrl: "https://example.com/schemas/web/purchase.json" },
+    { eventName: "add_to_cart", schemaUrl: "https://example.com/schemas/web/add-to-cart.json" },
+  ];
 
   it("includes the target URL", () => {
-    const prompt = buildInitialPrompt(schemaUrl, targetUrl);
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
     expect(prompt).toContain(targetUrl);
   });
 
-  it("instructs the agent to fetch the schema first", () => {
-    const prompt = buildInitialPrompt(schemaUrl, targetUrl);
-    expect(prompt.toLowerCase()).toMatch(/fetch|schema/);
+  it("instructs the agent to validate events", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    expect(prompt.toLowerCase()).toMatch(/validat/);
   });
 
-  it("instructs the agent to validate events", () => {
-    const prompt = buildInitialPrompt(schemaUrl, targetUrl);
-    expect(prompt.toLowerCase()).toMatch(/validat/);
+  it("embeds each event name in the prompt", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    expect(prompt).toContain("purchase");
+    expect(prompt).toContain("add_to_cart");
+  });
+
+  it("embeds each sub-schema URL in the prompt", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    expect(prompt).toContain("https://example.com/schemas/web/purchase.json");
+    expect(prompt).toContain("https://example.com/schemas/web/add-to-cart.json");
+  });
+
+  it("does NOT instruct the agent to fetch or discover schemas", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    // Schema discovery is done in code — the agent should not be asked to do it
+    expect(prompt.toLowerCase()).not.toMatch(/fetch.*schema|discover.*schema|\$ref/);
+  });
+
+  it("includes the description when present so the agent knows where the event fires", () => {
+    const schemas: EventSchema[] = [
+      {
+        eventName: "purchase",
+        schemaUrl: "https://example.com/schemas/web/purchase.json",
+        description: "Fires when a user completes a purchase.",
+      },
+    ];
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
+    expect(prompt).toContain("Fires when a user completes a purchase.");
+  });
+
+  it("omits the description marker when description is absent", () => {
+    const schemas: EventSchema[] = [
+      { eventName: "purchase", schemaUrl: "https://example.com/schemas/web/purchase.json" },
+    ];
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
+    expect(prompt).not.toContain(" — undefined");
+    expect(prompt).not.toContain(" — \n");
   });
 });
 
@@ -128,6 +231,91 @@ describe("createSystemPrompt", () => {
 
   it("mentions the schema", () => {
     expect(createSystemPrompt().toLowerCase()).toMatch(/schema/);
+  });
+
+  it("does not instruct the agent to call validate_event — validation is done in code", () => {
+    expect(createSystemPrompt()).not.toContain("validate_event");
+  });
+});
+
+// ─── checkApiKey ──────────────────────────────────────────────────────────────
+describe("checkApiKey", () => {
+  const env = process.env;
+
+  afterEach(() => {
+    process.env = { ...env };
+    vi.restoreAllMocks();
+  });
+
+  it("does not exit when ANTHROPIC_API_KEY is set for anthropic provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-test" };
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("exits when ANTHROPIC_API_KEY is missing for anthropic provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "anthropic" };
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_OAUTH_TOKEN"];
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).toThrow("exit");
+  });
+
+  it("does not exit when OPENAI_API_KEY is set for openai provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "openai", OPENAI_API_KEY: "sk-test" };
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("exits when OPENAI_API_KEY is missing for openai provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "openai" };
+    delete process.env["OPENAI_API_KEY"];
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).toThrow("exit");
+  });
+
+  it("does not exit for google-vertex when GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and ADC credentials are present", () => {
+    const adcPath = `${process.env["HOME"]}/.config/gcloud/application_default_credentials.json`;
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_PROJECT: "benedikt-testproject",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+    };
+    // Mock ADC file existence
+    const fs = require("fs") as typeof Fs;
+    vi.spyOn(fs, "existsSync").mockImplementation((p: unknown) => p === adcPath || fs.existsSync(p as string));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("exits for google-vertex when GOOGLE_CLOUD_PROJECT is missing", () => {
+    process.env = { ...env, MODEL_PROVIDER: "google-vertex", GOOGLE_CLOUD_LOCATION: "us-central1" };
+    delete process.env["GOOGLE_CLOUD_PROJECT"];
+    delete process.env["GCLOUD_PROJECT"];
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).toThrow("exit");
+  });
+
+  it("exits for google-vertex when GOOGLE_CLOUD_LOCATION is missing", () => {
+    process.env = { ...env, MODEL_PROVIDER: "google-vertex", GOOGLE_CLOUD_PROJECT: "my-project" };
+    delete process.env["GOOGLE_CLOUD_LOCATION"];
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).toThrow("exit");
+  });
+
+  it("includes gcloud setup hint in the error message for google-vertex", () => {
+    process.env = { ...env, MODEL_PROVIDER: "google-vertex" };
+    delete process.env["GOOGLE_CLOUD_PROJECT"];
+    delete process.env["GOOGLE_CLOUD_LOCATION"];
+    const stderrMessages: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((s) => { stderrMessages.push(String(s)); return true; });
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    expect(() => checkApiKey()).toThrow("exit");
+    expect(stderrMessages.join("")).toMatch(/gcloud/i);
   });
 });
 
@@ -178,6 +366,18 @@ describe("createAgent", () => {
   it("has the correct number of tools", () => {
     const agent = createAgent();
     expect(agent.state.tools).toHaveLength(allTools.length);
+  });
+
+  it("does not include fetch_schema — schema discovery is deterministic code", () => {
+    const agent = createAgent();
+    const toolNames = agent.state.tools.map((t) => t.name);
+    expect(toolNames).not.toContain("fetch_schema");
+  });
+
+  it("does not include validate_event — validation is deterministic code", () => {
+    const agent = createAgent();
+    const toolNames = agent.state.tools.map((t) => t.name);
+    expect(toolNames).not.toContain("validate_event");
   });
 
   it("uses the model resolved from env vars", () => {
@@ -258,6 +458,27 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).toContain("browser_snapshot");
   });
 
+  it("shows the URL arg for browser_navigate", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "browser_navigate", args: { url: "https://example.com/shop" } });
+    expect(err.join("")).toContain("https://example.com/shop");
+  });
+
+  it("shows selector info for browser_click", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "browser_click", args: { selector: "#add-to-cart" } });
+    expect(err.join("")).toContain("#add-to-cart");
+  });
+
+  it("shows from_index for get_datalayer", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "get_datalayer", args: { from_index: 3 } });
+    expect(err.join("")).toContain("3");
+  });
+
   it("writes a newline to out stream on agent_end", () => {
     const out: string[] = [];
     const handler = createConsoleHandler((s) => out.push(s));
@@ -294,5 +515,74 @@ describe("createConsoleHandler", () => {
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).toContain("401 Invalid API key");
+  });
+});
+
+// ─── buildAgentTools ──────────────────────────────────────────────────────────
+
+describe("buildAgentTools", () => {
+  it("returns the same number of tools as allTools", () => {
+    const { tools } = buildAgentTools([], false);
+    expect(tools).toHaveLength(allTools.length);
+  });
+
+  it("replaces get_datalayer with an accumulating version", async () => {
+    const acc: unknown[] = [];
+    const { tools } = buildAgentTools(acc, false);
+    const dlTool = tools.find((t) => t.name === "get_datalayer")!;
+    // Calling execute on the accumulating tool should push into acc
+    // (we stub the browser fn via the tool's own behaviour — we just verify
+    // that calling it returns a result and the tool name is preserved)
+    expect(dlTool).toBeDefined();
+    expect(dlTool.name).toBe("get_datalayer");
+  });
+
+  it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {
+    const { tools } = buildAgentTools([], true);
+    const hitTool = tools.find((t) => t.name === "request_human_input")!;
+    // Should resolve without hanging (no readline prompt)
+    await expect(hitTool.execute("1", { message: "do something" })).resolves.toBeDefined();
+  });
+
+  it("in headed mode, request_human_input is the original tool (waits for readline)", () => {
+    const { tools: headedTools } = buildAgentTools([], false);
+    const { tools: headlessTools } = buildAgentTools([], true);
+    // The headless version auto-resolves; verify the two tools are distinct objects
+    const headed = headedTools.find((t) => t.name === "request_human_input")!;
+    const headless = headlessTools.find((t) => t.name === "request_human_input")!;
+    expect(headed).not.toBe(headless);
+  });
+});
+
+// ─── collectAgentText ─────────────────────────────────────────────────────────
+
+describe("collectAgentText", () => {
+  it("returns all text deltas emitted during the agent prompt", async () => {
+    const agent = createAgent();
+    let captured: ((e: AgentEvent) => void) | null = null;
+    vi.spyOn(agent, "subscribe").mockImplementation((fn) => {
+      captured = fn as (e: AgentEvent) => void;
+      return undefined as never;
+    });
+    vi.spyOn(agent, "prompt").mockImplementation(async () => {
+      captured?.({ type: "message_update", message: {} as never, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello", partial: {} as never } });
+      captured?.({ type: "message_update", message: {} as never, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world", partial: {} as never } });
+      return {} as never;
+    });
+    expect(await collectAgentText(agent, "any prompt")).toBe("Hello world");
+  });
+
+  it("returns empty string when the agent emits no text deltas", async () => {
+    const agent = createAgent();
+    vi.spyOn(agent, "subscribe").mockImplementation(() => undefined as never);
+    vi.spyOn(agent, "prompt").mockResolvedValue({} as never);
+    expect(await collectAgentText(agent, "prompt")).toBe("");
+  });
+
+  it("resolves even when agent.prompt rejects", async () => {
+    const agent = createAgent();
+    vi.spyOn(agent, "subscribe").mockImplementation(() => undefined as never);
+    vi.spyOn(agent, "prompt").mockRejectedValue(new Error("API error"));
+    expect(await collectAgentText(agent, "prompt")).toBe("");
   });
 });

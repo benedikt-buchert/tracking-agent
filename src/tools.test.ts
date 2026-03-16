@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ─── Mock child_process so no real agent-browser calls happen ────────────────
-vi.mock("child_process", () => ({
-  exec: vi.fn(),
-}));
-
-import * as childProcess from "child_process";
+import type { BrowserFn } from "./runner.js";
 import {
   navigateTool,
   snapshotTool,
@@ -14,26 +8,24 @@ import {
   evalTool,
   waitTool,
   getDataLayerTool,
-  fetchSchemaTool,
-  validateEventTool,
+  createAccumulatingGetDataLayerTool,
   findTool,
+  createRequestHumanInputTool,
   allTools,
+  createNavigateTool,
+  createSnapshotTool,
+  createClickTool,
+  createFillTool,
+  createEvalTool,
+  createWaitTool,
+  createGetDataLayerTool,
+  createScreenshotTool,
+  createFindTool,
+  createAllTools,
 } from "./tools.js";
 
-// Helper: make exec call its callback with stdout
-function stubExec(stdout: string, stderr = "") {
-  vi.mocked(childProcess.exec).mockImplementation((_cmd: any, _opts: any, cb: any) => {
-    cb(null, stdout, stderr);
-    return {} as any;
-  });
-}
-
-function stubExecError(stderr: string) {
-  vi.mocked(childProcess.exec).mockImplementation((_cmd: any, _opts: any, cb: any) => {
-    const err = Object.assign(new Error(stderr), { stdout: "", stderr });
-    cb(err, "", stderr);
-    return {} as any;
-  });
+function mockBrowser(response = "ok"): BrowserFn {
+  return vi.fn().mockResolvedValue(response) as unknown as BrowserFn;
 }
 
 beforeEach(() => {
@@ -43,7 +35,7 @@ beforeEach(() => {
 // ─── allTools ─────────────────────────────────────────────────────────────────
 describe("allTools", () => {
   it("exports all tools in a single array", () => {
-    expect(allTools).toHaveLength(11);
+    expect(allTools).toHaveLength(10);
   });
 
   it("every tool has name, description, label, parameters, and execute", () => {
@@ -55,253 +47,314 @@ describe("allTools", () => {
       expect(typeof tool.execute).toBe("function");
     }
   });
+
+  it("does not include fetch_schema — schema discovery is deterministic code", () => {
+    const names = allTools.map((t) => t.name);
+    expect(names).not.toContain("fetch_schema");
+  });
 });
 
-// ─── navigateTool ─────────────────────────────────────────────────────────────
-describe("navigateTool", () => {
-  it("calls agent-browser open with the given URL", async () => {
-    stubExec("Navigated");
-    const result = await navigateTool.execute("1", { url: "https://example.com" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain('open "https://example.com"');
-    expect(cmd).toContain("networkidle");
-    expect(result.content[0].type).toBe("text");
+// ─── createNavigateTool ───────────────────────────────────────────────────────
+describe("createNavigateTool", () => {
+  it("calls the injected browserFn with the URL", async () => {
+    const browserFn = mockBrowser();
+    const tool = createNavigateTool(browserFn);
+    await tool.execute("1", { url: "https://example.com" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('"https://example.com"'));
+  });
+
+  it("waits for networkidle after navigation", async () => {
+    const browserFn = mockBrowser();
+    const tool = createNavigateTool(browserFn);
+    await tool.execute("1", { url: "https://example.com" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("networkidle"));
   });
 
   it("returns agent-browser output as text", async () => {
-    stubExec("Navigation complete");
-    const result = await navigateTool.execute("1", { url: "https://foo.com" });
-    expect((result.content[0] as any).text).toBe("Navigation complete");
+    const tool = createNavigateTool(mockBrowser("Navigation complete"));
+    const result = await tool.execute("1", { url: "https://foo.com" });
+    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
   });
 
-  it("returns fallback message when stdout is empty", async () => {
-    stubExec("");
-    const result = await navigateTool.execute("1", { url: "https://foo.com" });
-    expect((result.content[0] as any).text).toBe("Navigated successfully");
+  it("returns fallback message when output is empty", async () => {
+    const tool = createNavigateTool(mockBrowser(""));
+    const result = await tool.execute("1", { url: "https://foo.com" });
+    expect((result.content[0] as { text: string }).text).toBe("Navigated successfully");
   });
 });
 
-// ─── snapshotTool ─────────────────────────────────────────────────────────────
-describe("snapshotTool", () => {
-  it("calls agent-browser snapshot without flag by default", async () => {
-    stubExec("tree");
-    await snapshotTool.execute("1", {});
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("snapshot");
-    expect(cmd).not.toContain("-i");
+// keep the default export consistent
+describe("navigateTool", () => {
+  it("has the correct name", () => {
+    expect(navigateTool.name).toBe("browser_navigate");
+  });
+});
+
+// ─── createSnapshotTool ───────────────────────────────────────────────────────
+describe("createSnapshotTool", () => {
+  it("calls snapshot without -i flag by default", async () => {
+    const browserFn = mockBrowser("tree");
+    const tool = createSnapshotTool(browserFn);
+    await tool.execute("1", {});
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("snapshot"));
+    expect(vi.mocked(browserFn).mock.calls[0][0]).not.toContain("-i");
   });
 
   it("adds -i flag when interactive_only is true", async () => {
-    stubExec("tree");
-    await snapshotTool.execute("1", { interactive_only: true });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("snapshot -i");
+    const browserFn = mockBrowser("tree");
+    const tool = createSnapshotTool(browserFn);
+    await tool.execute("1", { interactive_only: true });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("snapshot -i"));
   });
 
   it("returns snapshot output", async () => {
-    stubExec("- button @e1\n- link @e2");
-    const result = await snapshotTool.execute("1", {});
-    expect((result.content[0] as any).text).toBe("- button @e1\n- link @e2");
+    const tool = createSnapshotTool(mockBrowser("- button @e1\n- link @e2"));
+    const result = await tool.execute("1", {});
+    expect((result.content[0] as { text: string }).text).toBe("- button @e1\n- link @e2");
   });
 });
 
-// ─── browser error handling ───────────────────────────────────────────────────
-describe("browser error handling", () => {
-  it("returns stderr message when agent-browser exits non-zero", async () => {
-    stubExecError("element not found: @e99");
-    const result = await clickTool.execute("1", { selector: "@e99" });
-    expect((result.content[0] as any).text).toContain("element not found");
+describe("snapshotTool", () => {
+  it("has the correct name", () => {
+    expect(snapshotTool.name).toBe("browser_snapshot");
   });
 });
 
-// ─── clickTool ────────────────────────────────────────────────────────────────
-describe("clickTool", () => {
-  it("calls agent-browser click with the selector", async () => {
-    stubExec("clicked");
-    await clickTool.execute("1", { selector: "@e3" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain('click "@e3"');
+// ─── createClickTool ──────────────────────────────────────────────────────────
+describe("createClickTool", () => {
+  it("calls browserFn with click and the selector", async () => {
+    const browserFn = mockBrowser("clicked");
+    const tool = createClickTool(browserFn);
+    await tool.execute("1", { selector: "@e3" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('click "@e3"'));
   });
 
   it("returns fallback when output is empty", async () => {
-    stubExec("");
-    const result = await clickTool.execute("1", { selector: "@e3" });
-    expect((result.content[0] as any).text).toBe("Clicked");
+    const tool = createClickTool(mockBrowser(""));
+    const result = await tool.execute("1", { selector: "@e3" });
+    expect((result.content[0] as { text: string }).text).toBe("Clicked");
+  });
+
+  it("returns browser error output as text", async () => {
+    const tool = createClickTool(mockBrowser("Error: element not found: @e99"));
+    const result = await tool.execute("1", { selector: "@e99" });
+    expect((result.content[0] as { text: string }).text).toContain("element not found");
   });
 });
 
-// ─── fillTool ─────────────────────────────────────────────────────────────────
+describe("clickTool", () => {
+  it("has the correct name", () => {
+    expect(clickTool.name).toBe("browser_click");
+  });
+});
+
+// ─── createFillTool ───────────────────────────────────────────────────────────
+describe("createFillTool", () => {
+  it("calls browserFn with fill, selector, and text", async () => {
+    const browserFn = mockBrowser("filled");
+    const tool = createFillTool(browserFn);
+    await tool.execute("1", { selector: "@e1", text: "hello" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('fill "@e1" "hello"'));
+  });
+});
+
 describe("fillTool", () => {
-  it("calls agent-browser fill with selector and text", async () => {
-    stubExec("filled");
-    await fillTool.execute("1", { selector: "@e1", text: "hello" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain('fill "@e1" "hello"');
+  it("has the correct name", () => {
+    expect(fillTool.name).toBe("browser_fill");
   });
 });
 
-// ─── evalTool ─────────────────────────────────────────────────────────────────
+// ─── createEvalTool ───────────────────────────────────────────────────────────
+describe("createEvalTool", () => {
+  it("calls browserFn with the JS expression", async () => {
+    const browserFn = mockBrowser("42");
+    const tool = createEvalTool(browserFn);
+    const result = await tool.execute("1", { js: "1 + 1" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("1 + 1"));
+    expect((result.content[0] as { text: string }).text).toBe("42");
+  });
+});
+
 describe("evalTool", () => {
-  it("calls agent-browser eval with the JS expression", async () => {
-    stubExec("42");
-    const result = await evalTool.execute("1", { js: "1 + 1" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("eval");
-    expect(cmd).toContain("1 + 1");
-    expect((result.content[0] as any).text).toBe("42");
+  it("has the correct name", () => {
+    expect(evalTool.name).toBe("browser_eval");
   });
 });
 
-// ─── waitTool ─────────────────────────────────────────────────────────────────
+// ─── createWaitTool ───────────────────────────────────────────────────────────
+describe("createWaitTool", () => {
+  it("calls browserFn with wait and the target", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", { target: "1000" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("wait 1000"));
+  });
+});
+
 describe("waitTool", () => {
-  it("calls agent-browser wait with the target", async () => {
-    stubExec("done");
-    await waitTool.execute("1", { target: "1000" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("wait 1000");
+  it("has the correct name", () => {
+    expect(waitTool.name).toBe("browser_wait");
   });
 });
 
-// ─── getDataLayerTool ─────────────────────────────────────────────────────────
-describe("getDataLayerTool", () => {
+// ─── createGetDataLayerTool ───────────────────────────────────────────────────
+describe("createGetDataLayerTool", () => {
   it("evaluates window.dataLayer in the browser", async () => {
-    stubExec('[{"event":"pageView"}]');
-    const result = await getDataLayerTool.execute("1", {});
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("dataLayer");
-    expect(cmd).toContain("slice(0)");
-    expect((result.content[0] as any).text).toBe('[{"event":"pageView"}]');
+    const browserFn = mockBrowser('[{"event":"pageView"}]');
+    const tool = createGetDataLayerTool(browserFn);
+    const result = await tool.execute("1", {});
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("dataLayer"));
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("slice(0)"));
+    expect((result.content[0] as { text: string }).text).toBe('[{"event":"pageView"}]');
   });
 
   it("slices from from_index when provided", async () => {
-    stubExec('[{"event":"click"}]');
-    await getDataLayerTool.execute("1", { from_index: 3 });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain("slice(3)");
+    const browserFn = mockBrowser('[{"event":"click"}]');
+    const tool = createGetDataLayerTool(browserFn);
+    await tool.execute("1", { from_index: 3 });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("slice(3)"));
   });
 
   it("returns empty array string when browser returns nothing", async () => {
-    stubExec("");
-    const result = await getDataLayerTool.execute("1", {});
-    expect((result.content[0] as any).text).toBe("[]");
+    const tool = createGetDataLayerTool(mockBrowser(""));
+    const result = await tool.execute("1", {});
+    expect((result.content[0] as { text: string }).text).toBe("[]");
   });
 });
 
-// ─── fetchSchemaTool ──────────────────────────────────────────────────────────
-describe("fetchSchemaTool", () => {
-  it("fetches a JSON schema and returns pretty-printed JSON", async () => {
-    const schema = { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" };
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => schema,
-    } as any);
-
-    const result = await fetchSchemaTool.execute("1", {
-      url: "https://example.com/schema.json",
-    });
-
-    expect(global.fetch).toHaveBeenCalledWith("https://example.com/schema.json");
-    const text = (result.content[0] as any).text;
-    expect(text).toContain('"$schema"');
-    expect(text).toContain('"type"');
-  });
-
-  it("returns an error message on HTTP failure", async () => {
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 } as any);
-
-    const result = await fetchSchemaTool.execute("1", { url: "https://bad.com/x.json" });
-    expect((result.content[0] as any).text).toContain("404");
-  });
-
-  it("returns an error message on network failure", async () => {
-    global.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
-
-    const result = await fetchSchemaTool.execute("1", { url: "https://bad.com/x.json" });
-    expect((result.content[0] as any).text).toContain("Network error");
+describe("getDataLayerTool", () => {
+  it("has the correct name", () => {
+    expect(getDataLayerTool.name).toBe("get_datalayer");
   });
 });
 
-// ─── validateEventTool ────────────────────────────────────────────────────────
-describe("validateEventTool", () => {
-  const SCHEMA_URL = "https://example.com/schema.json";
-
-  it("posts event to the validator with $schema set in body", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as any);
-
-    const event = { event: "page_view", page: "/home" };
-    await validateEventTool.execute("1", { event, schema_url: SCHEMA_URL });
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/v1/validate/remote"),
-      expect.objectContaining({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: expect.stringContaining(SCHEMA_URL),
-      })
-    );
+// ─── createAccumulatingGetDataLayerTool ──────────────────────────────────────
+describe("createAccumulatingGetDataLayerTool", () => {
+  it("appends parsed events to the accumulator on each call", async () => {
+    const events = [{ event: "page_view" }, { event: "purchase" }];
+    const acc: unknown[] = [];
+    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(JSON.stringify(events)));
+    await tool.execute("1", {});
+    expect(acc).toEqual(events);
   });
 
-  it("returns valid result when event matches schema", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as any);
-
-    const result = await validateEventTool.execute("1", {
-      event: { event: "page_view" },
-      schema_url: SCHEMA_URL,
-    });
-    const text = (result.content[0] as any).text;
-    expect(text).toContain('"valid": true');
+  it("handles double-encoded output from agent-browser", async () => {
+    const events = [{ event: "add_to_cart" }];
+    const acc: unknown[] = [];
+    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(JSON.stringify(JSON.stringify(events))));
+    await tool.execute("1", {});
+    expect(acc).toEqual(events);
   });
 
-  it("returns errors when event does not match schema", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        valid: false,
-        errors: [{ instancePath: "/event", message: "must be string" }],
-      }),
-    } as any);
-
-    const result = await validateEventTool.execute("1", {
-      event: { event: 123 },
-      schema_url: SCHEMA_URL,
-    });
-    const text = (result.content[0] as any).text;
-    expect(text).toContain('"valid": false');
-    expect(text).toContain("must be string");
+  it("accumulates across multiple calls", async () => {
+    const acc: unknown[] = [];
+    const browserFn = (vi.fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "purchase" }]))) as unknown as BrowserFn;
+    const tool = createAccumulatingGetDataLayerTool(acc, browserFn);
+    await tool.execute("1", {});
+    await tool.execute("1", { from_index: 1 });
+    expect(acc).toEqual([{ event: "page_view" }, { event: "purchase" }]);
   });
 
-  it("returns helpful error when validator server is unreachable", async () => {
-    global.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+  it("still returns the raw tool result to the agent", async () => {
+    const raw = JSON.stringify([{ event: "page_view" }]);
+    const acc: unknown[] = [];
+    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(raw));
+    const result = await tool.execute("1", {});
+    expect((result.content[0] as { text: string }).text).toBe(raw);
+  });
 
-    const result = await validateEventTool.execute("1", {
-      event: { event: "page_view" },
-      schema_url: SCHEMA_URL,
-    });
-    const text = (result.content[0] as any).text;
-    expect(text).toContain("ECONNREFUSED");
-    expect(text).toContain("tracking_validator");
+  it("does not throw when browser returns empty or invalid output", async () => {
+    const acc: unknown[] = [];
+    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(""));
+    await expect(tool.execute("1", {})).resolves.toBeDefined();
+    expect(acc).toEqual([]);
   });
 });
 
-// ─── findTool ─────────────────────────────────────────────────────────────────
-describe("findTool", () => {
+// ─── createScreenshotTool ─────────────────────────────────────────────────────
+describe("createScreenshotTool", () => {
+  it("calls browserFn with screenshot command", async () => {
+    const browserFn = mockBrowser("screenshot taken");
+    const tool = createScreenshotTool(browserFn);
+    await tool.execute("1", {});
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("screenshot"));
+  });
+
+  it("passes the path argument when provided", async () => {
+    const browserFn = mockBrowser("ok");
+    const tool = createScreenshotTool(browserFn);
+    await tool.execute("1", { path: "/tmp/shot.png" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('"/tmp/shot.png"'));
+  });
+});
+
+// ─── createFindTool ───────────────────────────────────────────────────────────
+describe("createFindTool", () => {
   it("builds correct command for click by role", async () => {
-    stubExec("clicked");
-    await findTool.execute("1", { locator: "role", value: "button", action: "click" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain('find role "button" click');
+    const browserFn = mockBrowser("clicked");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", { locator: "role", value: "button", action: "click" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('find role "button" click'));
   });
 
   it("builds correct command for fill by label", async () => {
-    stubExec("filled");
-    await findTool.execute("1", { locator: "label", value: "Email", action: "fill", fill_text: "test@example.com" });
-    const cmd = vi.mocked(childProcess.exec).mock.calls[0][0] as string;
-    expect(cmd).toContain('find label "Email" fill "test@example.com"');
+    const browserFn = mockBrowser("filled");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", { locator: "label", value: "Email", action: "fill", fill_text: "test@example.com" });
+    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('find label "Email" fill "test@example.com"'));
+  });
+});
+
+describe("findTool", () => {
+  it("has the correct name", () => {
+    expect(findTool.name).toBe("browser_find");
+  });
+});
+
+// ─── createAllTools ───────────────────────────────────────────────────────────
+describe("createAllTools", () => {
+  it("returns tools that use the injected browserFn", async () => {
+    const browserFn = mockBrowser("ok");
+    const tools = createAllTools(browserFn);
+    const navigate = tools.find((t) => t.name === "browser_navigate")!;
+    await navigate.execute("1", { url: "https://example.com" });
+    expect(browserFn).toHaveBeenCalled();
+  });
+
+  it("returns the same number of tools as allTools", () => {
+    expect(createAllTools(mockBrowser())).toHaveLength(allTools.length);
+  });
+});
+
+// ─── requestHumanInputTool ────────────────────────────────────────────────────
+
+describe("requestHumanInputTool", () => {
+  it("writes the agent message to the err stream", async () => {
+    const written: string[] = [];
+    const readLineFn = vi.fn().mockResolvedValue("");
+    const tool = createRequestHumanInputTool(readLineFn, (s) => written.push(s));
+    await tool.execute("1", { message: "Please log in first" });
+    expect(written.join("")).toContain("Please log in first");
+  });
+
+  it("calls readLineFn to wait for the user to press Enter", async () => {
+    const readLineFn = vi.fn().mockResolvedValue("");
+    const tool = createRequestHumanInputTool(readLineFn, () => {});
+    await tool.execute("1", { message: "Enter details" });
+    expect(readLineFn).toHaveBeenCalledOnce();
+  });
+
+  it("returns a message indicating the agent may continue", async () => {
+    const readLineFn = vi.fn().mockResolvedValue("");
+    const tool = createRequestHumanInputTool(readLineFn, () => {});
+    const result = await tool.execute("1", { message: "Enter payment details" });
+    expect((result.content[0] as { text: string }).text.toLowerCase()).toMatch(/continue|done|completed/);
+  });
+
+  it("is included in allTools", () => {
+    const names = allTools.map((t) => t.name);
+    expect(names).toContain("request_human_input");
   });
 });
