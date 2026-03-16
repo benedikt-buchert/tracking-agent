@@ -7,10 +7,10 @@ import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, getEnvApiKey } from "@mariozechner/pi-ai";
 import type { AssistantMessage, KnownProvider } from "@mariozechner/pi-ai";
 import chalk from "chalk";
-import { allTools, createDataLayerPoller, createRequestHumanInputTool } from "./tools.js";
+import { allTools, createDataLayerInterceptor, createRequestHumanInputTool } from "./tools.js";
 import type { EventSchema } from "./schema.js";
 import { discoverEventSchemas } from "./schema.js";
-import { defaultBrowserFn, startHeadedBrowser, closeBrowser, navigateTo, captureDataLayer, mergeUniqueEvents, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
+import { defaultBrowserFn, startHeadedBrowser, closeBrowser, navigateTo, drainInterceptor, waitForNavigation, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
 import type { AgentSession, PlaybookStep, StepExecutor } from "./runner.js";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../prompts");
@@ -272,7 +272,7 @@ export function buildAgentTools(
   accumulatedEvents: unknown[],
   headless: boolean,
 ): { tools: typeof allTools } {
-  const poll = createDataLayerPoller(accumulatedEvents);
+  const intercept = createDataLayerInterceptor(accumulatedEvents);
   const headlessHumanInputTool = headless
     ? createRequestHumanInputTool(() => Promise.resolve(""), () => {})
     : null;
@@ -281,7 +281,7 @@ export function buildAgentTools(
     .filter((t) => t.name !== "get_datalayer")
     .map((t) => {
       if (headlessHumanInputTool && t.name === "request_human_input") return headlessHumanInputTool;
-      if (POLLED_TOOL_NAMES.has(t.name)) return poll(t);
+      if (POLLED_TOOL_NAMES.has(t.name)) return intercept(t);
       return t;
     }) as typeof allTools;
   return { tools };
@@ -367,8 +367,11 @@ export async function main(): Promise<void> {
   process.stderr.write(chalk.dim(`  Opening ${targetUrl}...\n\n`));
   await navigateTo(targetUrl);
 
-  // Accumulator — collects all dataLayer events seen via get_datalayer across all pages
+  // Accumulator — collects all dataLayer events across all pages
   const accumulatedEvents: unknown[] = [];
+  // Install interceptor on the landing page and capture any events already there
+  const landingEvents = await drainInterceptor();
+  accumulatedEvents.push(...landingEvents);
   // In headless mode request_human_input auto-continues; accumulating tool tracks all events
   const { tools: agentTools } = buildAgentTools(accumulatedEvents, headless);
 
@@ -476,13 +479,19 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Step 4: Combine accumulated events with a final capture of the current page.
-  // Wait briefly first so async tracking pushes (e.g. purchase confirmation) have time to fire.
+  // Step 4: Drain any remaining buffered events, then wait for a potential late
+  // navigation (e.g. AJAX-driven checkout → order-received), then drain the new
+  // page. drainInterceptor auto-reinstalls on fresh pages so cross-navigation
+  // events — including purchase events pushed after AJAX redirect — are captured.
   process.stderr.write(chalk.dim(`\n  Capturing dataLayer events...\n`));
-  await defaultBrowserFn("wait 1500").catch(() => {});
-  const finalPageEvents = await captureDataLayer(0);
-  const events = mergeUniqueEvents(accumulatedEvents, finalPageEvents);
-  process.stderr.write(chalk.dim(`  Captured ${events.length} event(s) (${accumulatedEvents.length} accumulated + ${finalPageEvents.length} on final page)\n\n`));
+  const preNavEvents = await drainInterceptor();
+  accumulatedEvents.push(...preNavEvents);
+  const currentUrl = await defaultBrowserFn("eval 'window.location.href'").catch(() => "").then(u => u.replace(/^"|"$/g, ""));
+  await waitForNavigation(currentUrl);
+  const postNavEvents = await drainInterceptor();
+  accumulatedEvents.push(...postNavEvents);
+  const events = accumulatedEvents;
+  process.stderr.write(chalk.dim(`  Captured ${events.length} event(s)\n\n`));
 
   // Step 5: Validate all events (code)
   process.stderr.write(chalk.dim(`  Validating events...\n`));

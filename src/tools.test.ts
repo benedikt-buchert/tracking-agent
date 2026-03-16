@@ -23,6 +23,7 @@ import {
   createFindTool,
   createAllTools,
   createDataLayerPoller,
+  createDataLayerInterceptor,
 } from "./tools.js";
 
 function mockBrowser(response = "ok"): BrowserFn {
@@ -357,6 +358,62 @@ describe("requestHumanInputTool", () => {
   it("is included in allTools", () => {
     const names = allTools.map((t) => t.name);
     expect(names).toContain("request_human_input");
+  });
+});
+
+// ─── createDataLayerInterceptor ───────────────────────────────────────────────
+
+describe("createDataLayerInterceptor", () => {
+  it("appends drained events to accumulator after the wrapped tool executes", async () => {
+    const acc: unknown[] = [];
+    const events = [{ event: "page_view" }];
+    const interceptBrowserFn = mockBrowser(JSON.stringify(events));
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const tool = intercept(createNavigateTool(mockBrowser("ok")));
+    await tool.execute("1", { url: "https://example.com" });
+    expect(acc).toEqual(events);
+  });
+
+  it("accumulates across multiple calls without double-counting", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = (vi.fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "add_to_cart" }]))) as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const tool = intercept(createNavigateTool(mockBrowser("ok")));
+    await tool.execute("1", { url: "https://a.com" });
+    await tool.execute("1", { url: "https://b.com" });
+    expect(acc).toEqual([{ event: "page_view" }, { event: "add_to_cart" }]);
+  });
+
+  it("returns the original tool result unchanged", async () => {
+    const acc: unknown[] = [];
+    const intercept = createDataLayerInterceptor(acc, mockBrowser("[]"));
+    const tool = intercept(createNavigateTool(mockBrowser("Navigation complete")));
+    const result = await tool.execute("1", { url: "https://example.com" });
+    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
+  });
+
+  it("does not throw when drain fails", async () => {
+    const acc: unknown[] = [];
+    const failingBrowserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, failingBrowserFn);
+    const tool = intercept(createNavigateTool(mockBrowser("ok")));
+    await expect(tool.execute("1", { url: "https://example.com" })).resolves.toBeDefined();
+    expect(acc).toEqual([]);
+  });
+
+  it("shares state across multiple wrapped tools", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = (vi.fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "click" }]))) as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const navigate = intercept(createNavigateTool(mockBrowser("ok")));
+    const click = intercept(createClickTool(mockBrowser("ok")));
+    await navigate.execute("1", { url: "https://example.com" });
+    await click.execute("1", { selector: "@e1" });
+    expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
   });
 });
 

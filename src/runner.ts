@@ -284,6 +284,28 @@ export async function navigateTo(
   await browser(`open "${url}" && agent-browser wait --load networkidle`);
 }
 
+// ─── waitForNavigation ────────────────────────────────────────────────────────
+//
+// Polls the current URL every `intervalMs` until it differs from `fromUrl`
+// (meaning a navigation / redirect happened), then waits for networkidle on the
+// new page. Times out after `maxMs` and returns silently if no navigation occurs.
+
+export async function waitForNavigation(
+  fromUrl: string,
+  browser: BrowserFn = defaultBrowserFn,
+  { intervalMs = 500, maxMs = 10_000 }: { intervalMs?: number; maxMs?: number } = {},
+): Promise<void> {
+  const attempts = Math.ceil(maxMs / intervalMs);
+  for (let i = 0; i < attempts; i++) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    const currentUrl = await browser("eval 'window.location.href'").catch(() => fromUrl);
+    if (currentUrl.trim().replace(/^"|"$/g, "") !== fromUrl) {
+      await browser("wait --load networkidle").catch(() => {});
+      return;
+    }
+  }
+}
+
 // ─── captureDataLayer ─────────────────────────────────────────────────────────
 
 export async function captureDataLayer(
@@ -297,6 +319,48 @@ export async function captureDataLayer(
     const parsed = JSON.parse(out || "[]");
     // agent-browser eval JSON-encodes string results, so JSON.stringify(dataLayer) inside
     // the eval produces a string that agent-browser wraps in quotes. Double-parse if needed.
+    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+    return Array.isArray(result) ? result as unknown[] : [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── drainInterceptor ─────────────────────────────────────────────────────────
+//
+// Injects a dataLayer interceptor into the current page (if not already present)
+// and drains all buffered events. On a fresh/navigated page, captures everything
+// already in window.dataLayer before setting up the interceptor.
+//
+// Call this after any browser action that might trigger a page navigation.
+// If the page has changed, the interceptor is gone — this auto-detects that,
+// re-installs, and returns the full dataLayer from the new page.
+//
+// The injected JS avoids single quotes so it is safe to wrap in shell
+// single-quote delimiters for agent-browser eval '...'.
+
+export async function drainInterceptor(
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<unknown[]> {
+  const js = [
+    "(function() {",
+    "  if (!window.__dl_intercepted) {",
+    "    window.__dl_buffer = [];",
+    "    var dl = window.dataLayer;",
+    "    if (!Array.isArray(dl)) { window.dataLayer = []; dl = window.dataLayer; }",
+    "    for (var i = 0; i < dl.length; i++) { window.__dl_buffer.push(dl[i]); }",
+    "    var orig = dl.push;",
+    "    dl.push = function() { for (var j = 0; j < arguments.length; j++) { window.__dl_buffer.push(arguments[j]); } return orig.apply(dl, arguments); };",
+    "    window.__dl_intercepted = true;",
+    "  }",
+    "  var events = window.__dl_buffer.splice(0);",
+    "  return JSON.stringify(events);",
+    "})()",
+  ].join(" ");
+  const escaped = js.replace(/'/g, `'\\''`);
+  const out = await browser(`eval '${escaped}'`).catch(() => "");
+  try {
+    const parsed = JSON.parse(out || "[]");
     const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
     return Array.isArray(result) ? result as unknown[] : [];
   } catch {
@@ -352,6 +416,7 @@ export function isStuckOutput(output: string): boolean {
   const lower = output.toLowerCase();
   return (
     lower.startsWith("error") ||
+    lower.startsWith("command failed") ||
     lower.includes("not found") ||
     lower.includes("timed out") ||
     lower.includes("timeout")

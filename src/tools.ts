@@ -1,6 +1,6 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { defaultBrowserFn, captureDataLayer } from "./runner.js";
+import { defaultBrowserFn, captureDataLayer, drainInterceptor } from "./runner.js";
 import type { BrowserFn } from "./runner.js";
 
 function textResult(text: string) {
@@ -338,6 +338,30 @@ export function createDataLayerPoller(
       try {
         const newEvents = await captureDataLayer(lastIndex, browserFn);
         lastIndex += newEvents.length;
+        accumulator.push(...newEvents);
+      } catch { /* non-fatal */ }
+      return result;
+    },
+  });
+}
+
+// ─── createDataLayerInterceptor ───────────────────────────────────────────────
+//
+// Like createDataLayerPoller but uses the JS-level dataLayer interceptor instead
+// of polling by index. After each wrapped tool executes, drains the interceptor
+// buffer — auto-installing on new pages so cross-navigation events are captured
+// without any index tracking.
+
+export function createDataLayerInterceptor(
+  accumulator: unknown[],
+  browserFn: BrowserFn = defaultBrowserFn,
+): (tool: AnyTool) => AnyTool {
+  return (tool: AnyTool): AnyTool => ({
+    ...tool,
+    execute: async (id: string, args: unknown) => {
+      const result = await tool.execute(id, args);
+      try {
+        const newEvents = await drainInterceptor(browserFn);
         accumulator.push(...newEvents);
       } catch { /* non-fatal */ }
       return result;

@@ -10,6 +10,8 @@ import {
   formatAjvError,
   navigateTo,
   captureDataLayer,
+  drainInterceptor,
+  waitForNavigation,
   mergeUniqueEvents,
   startHeadedBrowser,
   saveSession,
@@ -596,6 +598,10 @@ describe("isStuckOutput", () => {
     expect(isStuckOutput("Navigation timeout exceeded")).toBe(true);
   });
 
+  it("returns true for output starting with 'Command failed'", () => {
+    expect(isStuckOutput("Command failed: agent-browser click \"#terms\"")).toBe(true);
+  });
+
   it("returns true for output containing 'timed out'", () => {
     expect(isStuckOutput("Action timed out after 30s")).toBe(true);
   });
@@ -715,6 +721,84 @@ describe("extractPlaybookSteps", () => {
     const bareSteps = [{ tool: "browser_click", args: { selector: "#btn" } }];
     const text = "```json\n" + JSON.stringify(fencedSteps) + "\n```\n" + JSON.stringify(bareSteps);
     expect(extractPlaybookSteps(text)).toEqual(fencedSteps);
+  });
+});
+
+// ─── drainInterceptor ─────────────────────────────────────────────────────────
+
+describe("drainInterceptor", () => {
+  it("returns parsed events from the browser eval result", async () => {
+    const events = [{ event: "page_view" }, { event: "purchase" }];
+    const browserFn = vi.fn().mockResolvedValue(JSON.stringify(events)) as unknown as import("./runner.js").BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual(events);
+  });
+
+  it("returns an empty array when the browser returns an empty JSON array", async () => {
+    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as import("./runner.js").BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("handles double-encoded output from agent-browser", async () => {
+    const events = [{ event: "add_to_cart" }];
+    const doubleEncoded = JSON.stringify(JSON.stringify(events));
+    const browserFn = vi.fn().mockResolvedValue(doubleEncoded) as unknown as import("./runner.js").BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual(events);
+  });
+
+  it("returns an empty array when the browser call fails", async () => {
+    const browserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as import("./runner.js").BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("returns an empty array when browser returns empty string", async () => {
+    const browserFn = vi.fn().mockResolvedValue("") as unknown as import("./runner.js").BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("passes JS containing __dl_intercepted and __dl_buffer to the browser", async () => {
+    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as import("./runner.js").BrowserFn;
+    await drainInterceptor(browserFn);
+    const call = vi.mocked(browserFn).mock.calls[0][0];
+    expect(call).toContain("__dl_intercepted");
+    expect(call).toContain("__dl_buffer");
+  });
+});
+
+// ─── waitForNavigation ────────────────────────────────────────────────────────
+
+describe("waitForNavigation", () => {
+  it("resolves immediately when URL changes on the first poll", async () => {
+    const browserFn = vi.fn()
+      .mockResolvedValueOnce('"https://example.com/order-received"') // first URL poll
+      .mockResolvedValueOnce("ok") as unknown as import("./runner.js").BrowserFn;
+    await waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 500 });
+    expect(browserFn).toHaveBeenCalledWith("eval 'window.location.href'");
+    expect(browserFn).toHaveBeenCalledWith("wait --load networkidle");
+  });
+
+  it("waits until URL changes then calls networkidle", async () => {
+    const browserFn = vi.fn()
+      .mockResolvedValueOnce('"https://example.com/checkout"')  // still on checkout
+      .mockResolvedValueOnce('"https://example.com/order-received"') // navigated
+      .mockResolvedValueOnce("ok") as unknown as import("./runner.js").BrowserFn;
+    await waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 500 });
+    const calls = vi.mocked(browserFn).mock.calls.map(c => c[0]);
+    expect(calls.filter(c => c === "wait --load networkidle")).toHaveLength(1);
+  });
+
+  it("times out silently when URL never changes", async () => {
+    const browserFn = vi.fn().mockResolvedValue('"https://example.com/checkout"') as unknown as import("./runner.js").BrowserFn;
+    await expect(
+      waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 10 })
+    ).resolves.toBeUndefined();
+    // networkidle should NOT have been called
+    const calls = vi.mocked(browserFn).mock.calls.map(c => c[0]);
+    expect(calls).not.toContain("wait --load networkidle");
   });
 });
 

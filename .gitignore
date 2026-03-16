@@ -4,3 +4,4 @@ dist/
 tracking-reports/
 .tracking-agent-playbook.json
 .tracking-agent-session.json
+.DS_Store
