@@ -22,6 +22,7 @@ import {
   createScreenshotTool,
   createFindTool,
   createAllTools,
+  createDataLayerPoller,
 } from "./tools.js";
 
 function mockBrowser(response = "ok"): BrowserFn {
@@ -356,5 +357,64 @@ describe("requestHumanInputTool", () => {
   it("is included in allTools", () => {
     const names = allTools.map((t) => t.name);
     expect(names).toContain("request_human_input");
+  });
+});
+
+// ─── createDataLayerPoller ────────────────────────────────────────────────────
+
+describe("createDataLayerPoller", () => {
+  it("appends new dataLayer events to accumulator after the wrapped tool executes", async () => {
+    const acc: unknown[] = [];
+    const pollBrowserFn = mockBrowser(JSON.stringify([{ event: "page_view" }]));
+    const poll = createDataLayerPoller(acc, pollBrowserFn);
+    const tool = poll(createNavigateTool(mockBrowser("ok")));
+    await tool.execute("1", { url: "https://example.com" });
+    expect(acc).toEqual([{ event: "page_view" }]);
+  });
+
+  it("advances the dataLayer index so subsequent calls do not double-count", async () => {
+    const acc: unknown[] = [];
+    const pollBrowserFn = (vi.fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "add_to_cart" }]))) as unknown as BrowserFn;
+    const poll = createDataLayerPoller(acc, pollBrowserFn);
+    const tool = poll(createNavigateTool(mockBrowser("ok")));
+    await tool.execute("1", { url: "https://a.com" });
+    await tool.execute("1", { url: "https://b.com" });
+    expect(acc).toEqual([{ event: "page_view" }, { event: "add_to_cart" }]);
+    // Second poll must use slice(1), not slice(0)
+    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toContain("slice(1)");
+  });
+
+  it("returns the original tool result unchanged", async () => {
+    const acc: unknown[] = [];
+    const poll = createDataLayerPoller(acc, mockBrowser("[]"));
+    const tool = poll(createNavigateTool(mockBrowser("Navigation complete")));
+    const result = await tool.execute("1", { url: "https://example.com" });
+    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
+  });
+
+  it("does not throw when dataLayer capture fails", async () => {
+    const acc: unknown[] = [];
+    const failingBrowserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
+    const poll = createDataLayerPoller(acc, failingBrowserFn);
+    const tool = poll(createNavigateTool(mockBrowser("ok")));
+    await expect(tool.execute("1", { url: "https://example.com" })).resolves.toBeDefined();
+    expect(acc).toEqual([]);
+  });
+
+  it("shares the index across multiple wrapped tools", async () => {
+    const acc: unknown[] = [];
+    const pollBrowserFn = (vi.fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "click" }]))) as unknown as BrowserFn;
+    const poll = createDataLayerPoller(acc, pollBrowserFn);
+    const navigate = poll(createNavigateTool(mockBrowser("ok")));
+    const click = poll(createClickTool(mockBrowser("ok")));
+    await navigate.execute("1", { url: "https://example.com" });
+    await click.execute("1", { selector: "@e1" });
+    // Second poll should use slice(1)
+    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toContain("slice(1)");
+    expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
   });
 });

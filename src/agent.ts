@@ -7,7 +7,7 @@ import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, getEnvApiKey } from "@mariozechner/pi-ai";
 import type { AssistantMessage, KnownProvider } from "@mariozechner/pi-ai";
 import chalk from "chalk";
-import { allTools, createAccumulatingGetDataLayerTool, createRequestHumanInputTool } from "./tools.js";
+import { allTools, createDataLayerPoller, createRequestHumanInputTool } from "./tools.js";
 import type { EventSchema } from "./schema.js";
 import { discoverEventSchemas } from "./schema.js";
 import { startHeadedBrowser, closeBrowser, navigateTo, captureDataLayer, mergeUniqueEvents, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
@@ -259,20 +259,31 @@ export function createAgent(): Agent {
 
 // ─── buildAgentTools ──────────────────────────────────────────────────────────
 
+const POLLED_TOOL_NAMES = new Set([
+  "browser_navigate",
+  "browser_click",
+  "browser_fill",
+  "browser_find",
+  "browser_wait",
+  "request_human_input",
+]);
+
 export function buildAgentTools(
   accumulatedEvents: unknown[],
   headless: boolean,
 ): { tools: typeof allTools } {
-  const accumulatingDataLayerTool = createAccumulatingGetDataLayerTool(accumulatedEvents);
+  const poll = createDataLayerPoller(accumulatedEvents);
   const headlessHumanInputTool = headless
     ? createRequestHumanInputTool(() => Promise.resolve(""), () => {})
     : null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools = allTools.map((t) => {
-    if (t.name === "get_datalayer") return accumulatingDataLayerTool;
-    if (headlessHumanInputTool && t.name === "request_human_input") return headlessHumanInputTool;
-    return t;
-  }) as typeof allTools;
+  const tools = allTools
+    .filter((t) => t.name !== "get_datalayer")
+    .map((t) => {
+      if (headlessHumanInputTool && t.name === "request_human_input") return headlessHumanInputTool;
+      if (POLLED_TOOL_NAMES.has(t.name)) return poll(t);
+      return t;
+    }) as typeof allTools;
   return { tools };
 }
 

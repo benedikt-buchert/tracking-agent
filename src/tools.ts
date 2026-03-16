@@ -1,6 +1,6 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { defaultBrowserFn } from "./runner.js";
+import { defaultBrowserFn, captureDataLayer } from "./runner.js";
 import type { BrowserFn } from "./runner.js";
 
 function textResult(text: string) {
@@ -316,6 +316,34 @@ export function createFindTool(browserFn: BrowserFn = defaultBrowserFn): AgentTo
 }
 
 export const findTool = createFindTool();
+
+// ─── createDataLayerPoller ────────────────────────────────────────────────────
+//
+// Returns a wrapper function that, after any wrapped tool executes, automatically
+// captures new dataLayer events and appends them to `accumulator`. The shared
+// `lastIndex` ensures each call only picks up events added since the previous poll.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyTool = AgentTool<any>;
+
+export function createDataLayerPoller(
+  accumulator: unknown[],
+  browserFn: BrowserFn = defaultBrowserFn,
+): (tool: AnyTool) => AnyTool {
+  let lastIndex = 0;
+  return (tool: AnyTool): AnyTool => ({
+    ...tool,
+    execute: async (id: string, args: unknown) => {
+      const result = await tool.execute(id, args);
+      try {
+        const newEvents = await captureDataLayer(lastIndex, browserFn);
+        lastIndex += newEvents.length;
+        accumulator.push(...newEvents);
+      } catch { /* non-fatal */ }
+      return result;
+    },
+  });
+}
 
 // ─── createAllTools ───────────────────────────────────────────────────────────
 

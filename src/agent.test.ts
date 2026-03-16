@@ -521,33 +521,26 @@ describe("createConsoleHandler", () => {
 // ─── buildAgentTools ──────────────────────────────────────────────────────────
 
 describe("buildAgentTools", () => {
-  it("returns the same number of tools as allTools", () => {
+  it("excludes get_datalayer — polling is now automatic", () => {
     const { tools } = buildAgentTools([], false);
-    expect(tools).toHaveLength(allTools.length);
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain("get_datalayer");
   });
 
-  it("replaces get_datalayer with an accumulating version", async () => {
-    const acc: unknown[] = [];
-    const { tools } = buildAgentTools(acc, false);
-    const dlTool = tools.find((t) => t.name === "get_datalayer")!;
-    // Calling execute on the accumulating tool should push into acc
-    // (we stub the browser fn via the tool's own behaviour — we just verify
-    // that calling it returns a result and the tool name is preserved)
-    expect(dlTool).toBeDefined();
-    expect(dlTool.name).toBe("get_datalayer");
+  it("returns allTools minus get_datalayer in total", () => {
+    const { tools } = buildAgentTools([], false);
+    expect(tools).toHaveLength(allTools.length - 1);
   });
 
   it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {
     const { tools } = buildAgentTools([], true);
     const hitTool = tools.find((t) => t.name === "request_human_input")!;
-    // Should resolve without hanging (no readline prompt)
     await expect(hitTool.execute("1", { message: "do something" })).resolves.toBeDefined();
   });
 
   it("in headed mode, request_human_input is the original tool (waits for readline)", () => {
     const { tools: headedTools } = buildAgentTools([], false);
     const { tools: headlessTools } = buildAgentTools([], true);
-    // The headless version auto-resolves; verify the two tools are distinct objects
     const headed = headedTools.find((t) => t.name === "request_human_input")!;
     const headless = headlessTools.find((t) => t.name === "request_human_input")!;
     expect(headed).not.toBe(headless);
