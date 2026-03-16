@@ -42,21 +42,21 @@ For Google Vertex auth: `gcloud auth application-default login`
 
 ```bash
 # Run with an Anthropic key
-ANTHROPIC_API_KEY=sk-... node dist/run.js \
+ANTHROPIC_API_KEY=sk-... tracking-agent \
   --schema https://example.com/schema.json \
   --url    https://example.com
 
 # Headless (CI / no display)
-ANTHROPIC_API_KEY=sk-... node dist/run.js \
+ANTHROPIC_API_KEY=sk-... tracking-agent \
   --schema https://example.com/schema.json \
   --url    https://example.com \
   --headless
 
 # Resume a previous session
-node dist/run.js --resume
+tracking-agent --resume
 
 # Replay a saved playbook
-node dist/run.js \
+tracking-agent \
   --schema https://example.com/schema.json \
   --url    https://example.com \
   --replay
