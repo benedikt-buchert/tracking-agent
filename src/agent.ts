@@ -10,7 +10,7 @@ import chalk from "chalk";
 import { allTools, createDataLayerPoller, createRequestHumanInputTool } from "./tools.js";
 import type { EventSchema } from "./schema.js";
 import { discoverEventSchemas } from "./schema.js";
-import { startHeadedBrowser, closeBrowser, navigateTo, captureDataLayer, mergeUniqueEvents, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
+import { defaultBrowserFn, startHeadedBrowser, closeBrowser, navigateTo, captureDataLayer, mergeUniqueEvents, validateAll, generateReport, saveSession, loadSession, isActionTool, replayPlaybook, savePlaybook, loadPlaybook, saveReportFolder, extractPlaybookSteps } from "./runner.js";
 import type { AgentSession, PlaybookStep, StepExecutor } from "./runner.js";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../prompts");
@@ -476,9 +476,10 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Step 4: Combine accumulated events (from agent's get_datalayer calls across all pages)
-  // with a final capture of the current page in case the agent missed anything.
+  // Step 4: Combine accumulated events with a final capture of the current page.
+  // Wait briefly first so async tracking pushes (e.g. purchase confirmation) have time to fire.
   process.stderr.write(chalk.dim(`\n  Capturing dataLayer events...\n`));
+  await defaultBrowserFn("wait 1500").catch(() => {});
   const finalPageEvents = await captureDataLayer(0);
   const events = mergeUniqueEvents(accumulatedEvents, finalPageEvents);
   process.stderr.write(chalk.dim(`  Captured ${events.length} event(s) (${accumulatedEvents.length} accumulated + ${finalPageEvents.length} on final page)\n\n`));
