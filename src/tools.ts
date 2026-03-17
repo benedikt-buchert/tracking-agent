@@ -1,6 +1,10 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { defaultBrowserFn, captureDataLayer, drainInterceptor } from "./runner.js";
+import {
+  defaultBrowserFn,
+  captureDataLayer,
+  drainInterceptor,
+} from "./runner.js";
 import type { BrowserFn } from "./runner.js";
 
 function textResult(text: string) {
@@ -13,7 +17,9 @@ const NavigateParams = Type.Object({
   url: Type.String({ description: "Full URL to navigate to" }),
 });
 
-export function createNavigateTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof NavigateParams> {
+export function createNavigateTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof NavigateParams> {
   return {
     name: "browser_navigate",
     description:
@@ -22,7 +28,7 @@ export function createNavigateTool(browserFn: BrowserFn = defaultBrowserFn): Age
     parameters: NavigateParams,
     execute: async (_id, { url }) => {
       const out = await browserFn(
-        `open "${url}" && agent-browser wait --load networkidle`
+        `open "${url}" && agent-browser wait --load networkidle`,
       );
       return textResult(out || "Navigated successfully");
     },
@@ -38,11 +44,13 @@ const SnapshotParams = Type.Object({
     Type.Boolean({
       description:
         "If true, return only interactive elements (buttons, links, inputs). Reduces output size.",
-    })
+    }),
   ),
 });
 
-export function createSnapshotTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof SnapshotParams> {
+export function createSnapshotTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof SnapshotParams> {
   return {
     name: "browser_snapshot",
     description:
@@ -68,7 +76,9 @@ const ClickParams = Type.Object({
   }),
 });
 
-export function createClickTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof ClickParams> {
+export function createClickTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof ClickParams> {
   return {
     name: "browser_click",
     description: "Click an element on the page.",
@@ -90,7 +100,9 @@ const FillParams = Type.Object({
   text: Type.String({ description: "Text to fill into the element" }),
 });
 
-export function createFillTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof FillParams> {
+export function createFillTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof FillParams> {
   return {
     name: "browser_fill",
     description: "Clear and fill a form field with text.",
@@ -113,7 +125,9 @@ const EvalParams = Type.Object({
   }),
 });
 
-export function createEvalTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof EvalParams> {
+export function createEvalTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof EvalParams> {
   return {
     name: "browser_eval",
     description:
@@ -134,11 +148,13 @@ export const evalTool = createEvalTool();
 
 const ScreenshotParams = Type.Object({
   path: Type.Optional(
-    Type.String({ description: "File path to save screenshot (optional)" })
+    Type.String({ description: "File path to save screenshot (optional)" }),
   ),
 });
 
-export function createScreenshotTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof ScreenshotParams> {
+export function createScreenshotTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof ScreenshotParams> {
   return {
     name: "browser_screenshot",
     description: "Take a screenshot of the current page.",
@@ -163,10 +179,13 @@ const WaitParams = Type.Object({
   }),
 });
 
-export function createWaitTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof WaitParams> {
+export function createWaitTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof WaitParams> {
   return {
     name: "browser_wait",
-    description: "Wait for an element to appear, a condition, or a time period.",
+    description:
+      "Wait for an element to appear, a condition, or a time period.",
     label: "Waiting",
     parameters: WaitParams,
     execute: async (_id, { target }) => {
@@ -185,11 +204,13 @@ const GetDataLayerParams = Type.Object({
     Type.Number({
       description:
         "Return only events from this index onwards (to get new events since last check). Defaults to 0 (all events).",
-    })
+    }),
   ),
 });
 
-export function createGetDataLayerTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof GetDataLayerParams> {
+export function createGetDataLayerTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof GetDataLayerParams> {
   return {
     name: "get_datalayer",
     description:
@@ -217,13 +238,16 @@ export function createAccumulatingGetDataLayerTool(
     ...base,
     execute: async (id, args) => {
       const result = await base.execute(id, args);
-      const text = (result.content[0] as { type: string; text: string }).text || "[]";
+      const text =
+        (result.content[0] as { type: string; text: string }).text || "[]";
       try {
         // agent-browser eval double-encodes string results — same logic as captureDataLayer
         const parsed = JSON.parse(text);
         const events = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
         if (Array.isArray(events)) accumulator.push(...events);
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return result;
     },
   };
@@ -233,6 +257,7 @@ export function createAccumulatingGetDataLayerTool(
 
 type ReadLineFn = (prompt: string) => Promise<string>;
 type WriteErrFn = (s: string) => void;
+type ResolveCurrentUrlFn = () => Promise<string>;
 
 async function defaultReadLine(prompt: string): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -248,33 +273,44 @@ async function defaultReadLine(prompt: string): Promise<string> {
 
 const RequestHumanInputParams = Type.Object({
   message: Type.String({
-    description: "Describe what you need the user to do in the browser (e.g. 'Please enter payment details and click Confirm').",
+    description:
+      "Describe what you need the user to do in the browser (e.g. 'Please enter payment details and click Confirm').",
   }),
 });
 
 export function createRequestHumanInputTool(
   readLineFn: ReadLineFn = defaultReadLine,
   writeErr: WriteErrFn = (s) => process.stderr.write(s),
+  resolveCurrentUrl: ResolveCurrentUrlFn = async () => "",
 ): AgentTool<typeof RequestHumanInputParams> {
   return {
     name: "request_human_input",
-    description: "Pause and ask the human to complete an action in the browser (e.g. enter payment info, solve a CAPTCHA, log in). The agent resumes after the human presses Enter.",
+    description:
+      "Pause and ask the human to complete an action in the browser (e.g. enter payment info, solve a CAPTCHA, log in). The agent resumes after the human presses Enter.",
     label: "Waiting for human",
     parameters: RequestHumanInputParams,
     execute: async (_id, { message }) => {
-      const url = await defaultBrowserFn("eval 'window.location.href'").catch(() => "");
+      const url = await resolveCurrentUrl().catch(() => "");
 
       writeErr(`\n  ⏸  Agent needs your help:\n  ${message}\n`);
       if (url) writeErr(`  Browser is at: ${url}\n`);
-      writeErr(`  Complete the action in the browser window, then press Enter.\n`);
+      writeErr(
+        `  Complete the action in the browser window, then press Enter.\n`,
+      );
 
       await readLineFn("  Press Enter when done... ");
-      return textResult("Human has completed the requested action. You may continue.");
+      return textResult(
+        "Human has completed the requested action. You may continue.",
+      );
     },
   };
 }
 
-export const requestHumanInputTool = createRequestHumanInputTool();
+export const requestHumanInputTool = createRequestHumanInputTool(
+  defaultReadLine,
+  (s) => process.stderr.write(s),
+  () => defaultBrowserFn("eval 'window.location.href'"),
+);
 
 // ─── Tool: find ───────────────────────────────────────────────────────────────
 
@@ -287,18 +323,20 @@ const FindParams = Type.Object({
       Type.Literal("placeholder"),
       Type.Literal("testid"),
     ],
-    { description: "How to locate the element" }
+    { description: "How to locate the element" },
   ),
   value: Type.String({ description: "Value to search for" }),
   action: Type.Union([Type.Literal("click"), Type.Literal("fill")], {
     description: "Action to perform on the found element",
   }),
   fill_text: Type.Optional(
-    Type.String({ description: "Text to fill (required when action is fill)" })
+    Type.String({ description: "Text to fill (required when action is fill)" }),
   ),
 });
 
-export function createFindTool(browserFn: BrowserFn = defaultBrowserFn): AgentTool<typeof FindParams> {
+export function createFindTool(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof FindParams> {
   return {
     name: "browser_find",
     description:
@@ -308,7 +346,7 @@ export function createFindTool(browserFn: BrowserFn = defaultBrowserFn): AgentTo
     execute: async (_id, { locator, value, action, fill_text }) => {
       const extra = action === "fill" && fill_text ? ` "${fill_text}"` : "";
       const out = await browserFn(
-        `find ${locator} "${value}" ${action}${extra}`
+        `find ${locator} "${value}" ${action}${extra}`,
       );
       return textResult(out || "Done");
     },
@@ -339,7 +377,9 @@ export function createDataLayerPoller(
         const newEvents = await captureDataLayer(lastIndex, browserFn);
         lastIndex += newEvents.length;
         accumulator.push(...newEvents);
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return result;
     },
   });
@@ -363,7 +403,9 @@ export function createDataLayerInterceptor(
       try {
         const newEvents = await drainInterceptor(browserFn);
         accumulator.push(...newEvents);
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return result;
     },
   });
@@ -372,7 +414,9 @@ export function createDataLayerInterceptor(
 // ─── createAllTools ───────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createAllTools(browserFn: BrowserFn = defaultBrowserFn): AgentTool<any>[] {
+export function createAllTools(
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<any>[] {
   return [
     createNavigateTool(browserFn),
     createSnapshotTool(browserFn),
