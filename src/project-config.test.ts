@@ -25,4 +25,37 @@ describe("project verification config", () => {
     const hook = readFileSync(hookPath, "utf8");
     expect(hook).toContain("npm run verify");
   });
+
+  it("defines mutation-testing scripts and stryker config for deterministic core files", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as {
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.["test:mutation"]).toBe("stryker run");
+    expect(pkg.devDependencies?.["@stryker-mutator/core"]).toBeTruthy();
+    expect(
+      pkg.devDependencies?.["@stryker-mutator/vitest-runner"],
+    ).toBeTruthy();
+    expect(
+      pkg.devDependencies?.["@stryker-mutator/typescript-checker"],
+    ).toBeTruthy();
+
+    const configPath = join(ROOT, "stryker.config.json");
+    expect(existsSync(configPath)).toBe(true);
+
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      mutate?: string[];
+      testRunner?: string;
+      checkers?: string[];
+      tsconfigFile?: string;
+    };
+
+    expect(config.testRunner).toBe("vitest");
+    expect(config.checkers).toEqual(["typescript"]);
+    expect(config.tsconfigFile).toBe("tsconfig.json");
+    expect(config.mutate).toEqual(["src/schema.ts"]);
+  });
 });
