@@ -480,6 +480,12 @@ describe("createAgent", () => {
     expect(() => createAgent()).toThrow(ConfigurationError);
   });
 
+  it("includes the requested agent usage context in missing-credential errors", () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_OAUTH_TOKEN"];
+    expect(() => createAgent("replay recovery")).toThrow(/replay recovery/i);
+  });
+
   it("registers all tools", () => {
     const agent = createAgent();
     const toolNames = agent.state.tools.map((t) => t.name);

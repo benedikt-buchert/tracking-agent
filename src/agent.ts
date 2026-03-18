@@ -374,8 +374,21 @@ export function checkApiKey(): void {
   );
 }
 
-export function createAgent(): Agent {
-  checkApiKey();
+export function createAgent(purpose = "agent-assisted exploration"): Agent {
+  try {
+    checkApiKey();
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      throw new ConfigurationError(
+        chalk.yellow(`\nLLM assistance is required for ${purpose}.\n`) +
+          chalk.dim(
+            `Deterministic execution has reached a step that needs the model.\n`,
+          ) +
+          error.message,
+      );
+    }
+    throw error;
+  }
   const agent = new Agent({
     // For google-vertex with ADC, return undefined so pi-ai uses project/location + ADC
     // rather than treating the "<authenticated>" sentinel as a literal API key.
@@ -552,8 +565,9 @@ function createConfiguredAgent(
   schemaUrl: string,
   targetUrl: string,
   eventSchemas: EventSchema[],
+  purpose: string,
 ): Agent {
-  const agent = createAgent();
+  const agent = createAgent(purpose);
   agent.setTools(agentTools);
   attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas);
   agent.subscribe(createConsoleHandler());
@@ -614,6 +628,7 @@ async function runReplayMode(
     schemaUrl,
     targetUrl,
     eventSchemas,
+    "replay recovery after deterministic execution got stuck",
   );
   const agentSteps: PlaybookStep[] = [];
   let recording = true;
@@ -673,6 +688,9 @@ async function runInteractiveMode(
     schemaUrl,
     targetUrl,
     eventSchemas,
+    resume
+      ? "resuming an unfinished agent-assisted session"
+      : "exploring the site when deterministic execution is insufficient",
   );
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;
