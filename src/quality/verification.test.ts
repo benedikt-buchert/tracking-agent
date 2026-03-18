@@ -4,8 +4,8 @@ import {
   countEventsByType,
   mergeUniqueEvents,
   resolveSchemaForEvent,
-} from "./runner.js";
-import type { EventSchema } from "./schema.js";
+} from "../browser/runner.js";
+import type { EventSchema } from "../schema.js";
 
 const eventArbitrary = fc.oneof(
   fc.record({ event: fc.string({ maxLength: 24 }), value: fc.integer() }),

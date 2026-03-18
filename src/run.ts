@@ -6,7 +6,8 @@ try {
   /* no .env file, continue */
 }
 
-import { main, ConfigurationError } from "./agent.js";
+import { main } from "./main.js";
+import { ConfigurationError } from "./agent/runtime.js";
 
 main().catch((err: unknown) => {
   if (err instanceof ConfigurationError) {

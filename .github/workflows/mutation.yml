@@ -23,7 +23,7 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: node --import tsx src/mutation-run.ts --base origin/${{ github.base_ref }} --head HEAD
+      - run: node --import tsx src/quality/mutation-run.ts --base origin/${{ github.base_ref }} --head HEAD
 
   mutation-main:
     if: github.event_name != 'pull_request'

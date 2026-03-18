@@ -22,7 +22,7 @@ interface IstanbulFileCoverage {
 
 type CoverageReport = Record<string, IstanbulFileCoverage>;
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = resolve(import.meta.dirname, "..", "..");
 const COVERAGE_PATH = resolve(ROOT, "coverage", "coverage-final.json");
 
 function main(): void {
@@ -54,19 +54,24 @@ function main(): void {
   const sorted = [...selectedReports].sort((a, b) => b.crap - a.crap);
 
   if (sorted.length === 0) {
-    console.log("No analyzable files selected for CRAP reporting.");
+    process.stdout.write("No analyzable files selected for CRAP reporting.\n");
     return;
   }
 
-  console.table(
-    sorted.map((report) => ({
-      file: report.filePath,
-      function: report.name,
-      line: report.startLine,
-      complexity: report.complexity,
-      coverage: report.statementCoverage,
-      crap: report.crap,
-    })),
+  const rows = sorted
+    .map((report) =>
+      [
+        report.filePath,
+        report.name,
+        String(report.startLine),
+        String(report.complexity),
+        String(report.statementCoverage),
+        String(report.crap),
+      ].join("\t"),
+    )
+    .join("\n");
+  process.stdout.write(
+    ["file\tfunction\tline\tcomplexity\tcoverage\tcrap", rows, ""].join("\n"),
   );
 
   if (options.threshold !== undefined) {

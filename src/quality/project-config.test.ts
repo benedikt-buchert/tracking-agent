@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
-const ROOT = join(import.meta.dirname, "..");
+const ROOT = join(import.meta.dirname, "..", "..");
 
 describe("project verification config", () => {
   it("defines prepare and verify scripts for husky-based verification", () => {
@@ -36,7 +36,7 @@ describe("project verification config", () => {
 
     expect(pkg.scripts?.["test:mutation"]).toBe("stryker run");
     expect(pkg.scripts?.["test:mutation:changed"]).toBe(
-      "node --import tsx src/mutation-run.ts --staged",
+      "node --import tsx src/quality/mutation-run.ts --staged",
     );
     expect(pkg.devDependencies?.["@stryker-mutator/core"]).toBeTruthy();
     expect(
@@ -74,10 +74,10 @@ describe("project verification config", () => {
       "vitest run --coverage.enabled true --coverage.provider v8 --coverage.reporter json",
     );
     expect(pkg.scripts?.["quality:staged"]).toBe(
-      "npm run lint && npm run test:coverage && npm run typecheck && node --import tsx src/crap-report.ts --staged --threshold 30",
+      "npm run lint && npm run test:coverage && npm run typecheck && node --import tsx src/quality/crap-report.ts --staged --threshold 30",
     );
     expect(pkg.scripts?.["test:crap"]).toBe(
-      "npm run test:coverage && node --import tsx src/crap-report.ts",
+      "npm run test:coverage && node --import tsx src/quality/crap-report.ts",
     );
     expect(pkg.devDependencies?.["@vitest/coverage-v8"]).toBeTruthy();
   });
@@ -99,7 +99,7 @@ describe("project verification config", () => {
     expect(existsSync(mutationWorkflowPath)).toBe(true);
 
     const mutationWorkflow = readFileSync(mutationWorkflowPath, "utf8");
-    expect(mutationWorkflow).toContain("src/mutation-run.ts --base");
+    expect(mutationWorkflow).toContain("src/quality/mutation-run.ts --base");
     expect(mutationWorkflow).toContain("npm run test:mutation");
   });
 });

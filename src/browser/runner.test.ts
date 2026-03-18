@@ -35,7 +35,7 @@ import type {
   PlaybookStep,
   BrowserFn,
 } from "./runner.js";
-import type { EventSchema } from "./schema.js";
+import type { EventSchema } from "../schema.js";
 
 const schemas: EventSchema[] = [
   {
@@ -147,6 +147,16 @@ describe("formatAjvError", () => {
 
   it("falls back to JSON.stringify for unknown non-string values", () => {
     expect(formatAjvError({ weird: true })).toBe('{"weird":true}');
+  });
+
+  it("falls back to JSON.stringify when a structured error has no usable message", () => {
+    expect(
+      formatAjvError({
+        instancePath: "/event",
+        keyword: "const",
+        params: {},
+      }),
+    ).toBe('{"instancePath":"/event","keyword":"const","params":{}}');
   });
 });
 
@@ -398,6 +408,29 @@ describe("generateReport", () => {
     );
     // The existing tests still pass — no new section added without allEvents
     expect(report).toContain("purchase");
+  });
+
+  it("includes schema descriptions for failing and missing expected events", () => {
+    const report = generateReport(
+      [failing],
+      ["add_to_cart", "page_view"],
+      undefined,
+      [
+        {
+          eventName: "add_to_cart",
+          schemaUrl: "https://example.com/schemas/web/add-to-cart.json",
+          description: "Cart addition",
+        },
+        {
+          eventName: "page_view",
+          schemaUrl: "https://example.com/schemas/web/page-view.json",
+          description: "Page was viewed",
+        },
+      ],
+    );
+
+    expect(report).toContain("Schema: Cart addition");
+    expect(report).toContain("page_view — Page was viewed");
   });
 });
 

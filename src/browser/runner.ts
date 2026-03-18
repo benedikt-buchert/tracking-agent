@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-import type { EventSchema } from "./schema.js";
+import type { EventSchema } from "../schema.js";
 
 export const VALIDATOR_BASE_URL =
   process.env.VALIDATOR_URL ?? "http://localhost:3000";
@@ -130,29 +130,40 @@ export function formatAjvError(e: unknown): string {
       : {};
   const message = typeof err["message"] === "string" ? err["message"] : "";
   const prefix = instancePath ? `${instancePath} ` : "";
+  return (
+    formatAjvKeywordError(keyword, params, prefix) ??
+    (message ? `${prefix}${message}` : JSON.stringify(e))
+  );
+}
 
-  switch (keyword) {
-    case "const": {
-      const allowedValue = params["allowedValue"];
-      if (allowedValue !== undefined)
-        return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
-      break;
+function formatAjvKeywordError(
+  keyword: string,
+  params: Record<string, unknown>,
+  prefix: string,
+): string | undefined {
+  if (keyword === "const") {
+    const allowedValue = params["allowedValue"];
+    if (allowedValue !== undefined) {
+      return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
     }
-    case "required": {
-      const missingProperty = params["missingProperty"];
-      if (typeof missingProperty === "string")
-        return `Missing required property: ${missingProperty}`;
-      break;
-    }
-    case "additionalProperties": {
-      const additionalProperty = params["additionalProperty"];
-      if (typeof additionalProperty === "string")
-        return `Unexpected property: ${additionalProperty}`;
-      break;
-    }
+    return undefined;
   }
 
-  return message ? `${prefix}${message}` : JSON.stringify(e);
+  if (keyword === "required") {
+    const missingProperty = params["missingProperty"];
+    return typeof missingProperty === "string"
+      ? `Missing required property: ${missingProperty}`
+      : undefined;
+  }
+
+  if (keyword === "additionalProperties") {
+    const additionalProperty = params["additionalProperty"];
+    return typeof additionalProperty === "string"
+      ? `Unexpected property: ${additionalProperty}`
+      : undefined;
+  }
+
+  return undefined;
 }
 
 // ─── validateEvent ────────────────────────────────────────────────────────────
@@ -234,57 +245,96 @@ export function generateReport(
 
   const lines: string[] = [];
 
-  lines.push(`\n── Tracking Validation Report ──────────────────────────────`);
-  lines.push(`  Total events captured: ${results.length}`);
-  lines.push(`  Passed: ${passing.length}  Failed: ${failing.length}\n`);
-
-  if (allEvents && allEvents.length > 0) {
-    const counts = countEventsByType(allEvents);
-    lines.push(`  dataLayer pushes (${allEvents.length} total)`);
-    for (const [name, count] of counts) {
-      lines.push(`    ${name.padEnd(32)} ×${count}`);
-    }
-    lines.push("");
-  }
-
-  if (passing.length > 0) {
-    lines.push(`  ✔ Passing events`);
-    for (const r of passing) {
-      lines.push(`    [${r.index}] ${r.eventName ?? "(unnamed)"}`);
-    }
-    lines.push("");
-  }
-
-  if (failing.length > 0) {
-    lines.push(`  ✖ Failing events — what needs fixing`);
-    for (const r of failing) {
-      const schema = eventSchemas?.find((s) => s.eventName === r.eventName);
-      lines.push(`    [${r.index}] ${r.eventName ?? "(unnamed)"}`);
-      if (schema?.description) {
-        lines.push(`        Schema: ${schema.description}`);
-      }
-      lines.push(`        Schema URL: ${r.schemaUrl}`);
-      for (const err of r.result.errors) {
-        lines.push(`        ✗ ${err}`);
-      }
-    }
-    lines.push("");
-  }
-
-  if (notObserved.length > 0) {
-    lines.push(
-      `  ⚠ Expected events not observed — these are missing from the dataLayer`,
-    );
-    for (const name of notObserved) {
-      const schema = eventSchemas?.find((s) => s.eventName === name);
-      const desc = schema?.description ? ` — ${schema.description}` : "";
-      lines.push(`    - ${name}${desc}`);
-    }
-    lines.push("");
-  }
-
-  lines.push(`────────────────────────────────────────────────────────────\n`);
+  appendLines(
+    lines,
+    buildReportHeader(results.length, passing.length, failing.length),
+  );
+  appendLines(lines, buildCountsSection(allEvents));
+  appendLines(lines, buildPassingSection(passing));
+  appendLines(lines, buildFailingSection(failing, eventSchemas));
+  appendLines(lines, buildMissingSection(notObserved, eventSchemas));
+  lines.push("────────────────────────────────────────────────────────────\n");
   return lines.join("\n");
+}
+
+function buildReportHeader(
+  totalEvents: number,
+  passingCount: number,
+  failingCount: number,
+): string[] {
+  return [
+    "\n── Tracking Validation Report ──────────────────────────────",
+    `  Total events captured: ${totalEvents}`,
+    `  Passed: ${passingCount}  Failed: ${failingCount}\n`,
+  ];
+}
+
+function buildCountsSection(allEvents?: unknown[]): string[] {
+  if (!allEvents || allEvents.length === 0) return [];
+
+  const lines = [`  dataLayer pushes (${allEvents.length} total)`];
+  for (const [name, count] of countEventsByType(allEvents)) {
+    lines.push(`    ${name.padEnd(32)} ×${count}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildPassingSection(passing: EventValidationResult[]): string[] {
+  if (passing.length === 0) return [];
+
+  const lines = ["  ✔ Passing events"];
+  for (const result of passing) {
+    lines.push(`    [${result.index}] ${result.eventName ?? "(unnamed)"}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildFailingSection(
+  failing: EventValidationResult[],
+  eventSchemas?: EventSchema[],
+): string[] {
+  if (failing.length === 0) return [];
+
+  const lines = ["  ✖ Failing events — what needs fixing"];
+  for (const result of failing) {
+    const schema = eventSchemas?.find((s) => s.eventName === result.eventName);
+    lines.push(`    [${result.index}] ${result.eventName ?? "(unnamed)"}`);
+    if (schema?.description) {
+      lines.push(`        Schema: ${schema.description}`);
+    }
+    lines.push(`        Schema URL: ${result.schemaUrl}`);
+    for (const error of result.result.errors) {
+      lines.push(`        ✗ ${error}`);
+    }
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildMissingSection(
+  notObserved: string[],
+  eventSchemas?: EventSchema[],
+): string[] {
+  if (notObserved.length === 0) return [];
+
+  const lines = [
+    "  ⚠ Expected events not observed — these are missing from the dataLayer",
+  ];
+  for (const name of notObserved) {
+    const schema = eventSchemas?.find((s) => s.eventName === name);
+    const description = schema?.description ? ` — ${schema.description}` : "";
+    lines.push(`    - ${name}${description}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function appendLines(target: string[], section: string[]): void {
+  if (section.length > 0) {
+    target.push(...section);
+  }
 }
 
 // ─── saveReportFolder ─────────────────────────────────────────────────────────
