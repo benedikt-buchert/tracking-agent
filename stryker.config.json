@@ -3,8 +3,8 @@
   "testRunner": "vitest",
   "checkers": ["typescript"],
   "tsconfigFile": "tsconfig.json",
-  "mutate": ["src/schema.ts"],
-  "reporters": ["clear-text", "html"],
+  "mutate": ["src/**/*.ts", "!src/**/*.test.ts"],
+  "reporters": ["json"],
   "typescriptChecker": {
     "prioritizePerformanceOverAccuracy": true
   }
