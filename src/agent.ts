@@ -375,6 +375,7 @@ export function checkApiKey(): void {
 }
 
 export function createAgent(): Agent {
+  checkApiKey();
   const agent = new Agent({
     // For google-vertex with ADC, return undefined so pi-ai uses project/location + ADC
     // rather than treating the "<authenticated>" sentinel as a literal API key.
@@ -726,8 +727,6 @@ export async function main(): Promise<void> {
   }
 
   const { schemaUrl, targetUrl, resume, replay, headless } = args;
-
-  checkApiKey();
 
   const mode = replay ? "replay" : resume ? "resume" : "fresh";
   process.stderr.write(

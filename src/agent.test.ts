@@ -454,9 +454,30 @@ describe("resolveModel", () => {
 
 // ─── createAgent ─────────────────────────────────────────────────────────────
 describe("createAgent", () => {
+  const env = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "sk-test",
+    };
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+    vi.restoreAllMocks();
+  });
+
   it("returns an Agent instance with a prompt method", () => {
     const agent = createAgent();
     expect(typeof agent.prompt).toBe("function");
+  });
+
+  it("throws ConfigurationError when agent creation is attempted without model credentials", () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_OAUTH_TOKEN"];
+    expect(() => createAgent()).toThrow(ConfigurationError);
   });
 
   it("registers all tools", () => {
@@ -696,6 +717,21 @@ describe("buildAgentTools", () => {
 // ─── collectAgentText ─────────────────────────────────────────────────────────
 
 describe("collectAgentText", () => {
+  const env = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "sk-test",
+    };
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+    vi.restoreAllMocks();
+  });
+
   it("returns all text deltas emitted during the agent prompt", async () => {
     const agent = createAgent();
     let captured: ((e: AgentEvent) => void) | null = null;
