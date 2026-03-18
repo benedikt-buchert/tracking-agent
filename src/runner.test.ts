@@ -3,6 +3,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import {
+  runAgentBrowser,
+  runBrowserEval,
+  parseBrowserJsonArray,
+  getCurrentUrl,
   resolveSchemaForEvent,
   validateEvent,
   validateAll,
@@ -25,12 +29,23 @@ import {
   saveReportFolder,
   extractPlaybookSteps,
 } from "./runner.js";
-import type { EventValidationResult, AgentSession, PlaybookStep } from "./runner.js";
+import type {
+  EventValidationResult,
+  AgentSession,
+  PlaybookStep,
+  BrowserFn,
+} from "./runner.js";
 import type { EventSchema } from "./schema.js";
 
 const schemas: EventSchema[] = [
-  { eventName: "purchase", schemaUrl: "https://example.com/schemas/web/purchase.json" },
-  { eventName: "add_to_cart", schemaUrl: "https://example.com/schemas/web/add-to-cart.json" },
+  {
+    eventName: "purchase",
+    schemaUrl: "https://example.com/schemas/web/purchase.json",
+  },
+  {
+    eventName: "add_to_cart",
+    schemaUrl: "https://example.com/schemas/web/add-to-cart.json",
+  },
 ];
 
 const ENTRY_URL = "https://example.com/schemas/entry.json";
@@ -42,7 +57,9 @@ describe("resolveSchemaForEvent", () => {
     const event = { event: "purchase", transactionId: "T123" };
     const result = resolveSchemaForEvent(event, schemas, ENTRY_URL);
     expect(result.eventName).toBe("purchase");
-    expect(result.schemaUrl).toBe("https://example.com/schemas/web/purchase.json");
+    expect(result.schemaUrl).toBe(
+      "https://example.com/schemas/web/purchase.json",
+    );
   });
 
   it("returns entry URL as fallback when no schema matches", () => {
@@ -70,48 +87,58 @@ describe("resolveSchemaForEvent", () => {
 
 describe("formatAjvError", () => {
   it("formats const errors as: <path> must equal <value>", () => {
-    expect(formatAjvError({
-      instancePath: "/event",
-      keyword: "const",
-      params: { allowedValue: "purchase" },
-      message: "must be equal to constant",
-    })).toBe('/event must equal "purchase"');
+    expect(
+      formatAjvError({
+        instancePath: "/event",
+        keyword: "const",
+        params: { allowedValue: "purchase" },
+        message: "must be equal to constant",
+      }),
+    ).toBe('/event must equal "purchase"');
   });
 
   it("formats required errors as: Missing required property: <name>", () => {
-    expect(formatAjvError({
-      instancePath: "",
-      keyword: "required",
-      params: { missingProperty: "transactionId" },
-      message: "must have required property 'transactionId'",
-    })).toBe("Missing required property: transactionId");
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "required",
+        params: { missingProperty: "transactionId" },
+        message: "must have required property 'transactionId'",
+      }),
+    ).toBe("Missing required property: transactionId");
   });
 
   it("formats additionalProperties errors as: Unexpected property: <name>", () => {
-    expect(formatAjvError({
-      instancePath: "",
-      keyword: "additionalProperties",
-      params: { additionalProperty: "typo_field" },
-      message: "must NOT have additional properties",
-    })).toBe("Unexpected property: typo_field");
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "additionalProperties",
+        params: { additionalProperty: "typo_field" },
+        message: "must NOT have additional properties",
+      }),
+    ).toBe("Unexpected property: typo_field");
   });
 
   it("prepends instancePath for type and other errors", () => {
-    expect(formatAjvError({
-      instancePath: "/items/0/price",
-      keyword: "type",
-      params: { type: "number" },
-      message: "must be number",
-    })).toBe("/items/0/price must be number");
+    expect(
+      formatAjvError({
+        instancePath: "/items/0/price",
+        keyword: "type",
+        params: { type: "number" },
+        message: "must be number",
+      }),
+    ).toBe("/items/0/price must be number");
   });
 
   it("returns message as-is when instancePath is empty and keyword is unrecognised", () => {
-    expect(formatAjvError({
-      instancePath: "",
-      keyword: "minimum",
-      params: { limit: 0 },
-      message: "must be >= 0",
-    })).toBe("must be >= 0");
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "minimum",
+        params: { limit: 0 },
+        message: "must be >= 0",
+      }),
+    ).toBe("must be >= 0");
   });
 
   it("passes through plain string errors unchanged", () => {
@@ -134,7 +161,10 @@ describe("validateEvent", () => {
       json: async () => ({ valid: true, errors: [] }),
     } as Response);
 
-    const result = await validateEvent({ event: "purchase" }, "https://example.com/purchase.json");
+    const result = await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
   });
@@ -142,25 +172,44 @@ describe("validateEvent", () => {
   it("returns valid:false with errors when the validator responds with invalid", async () => {
     vi.spyOn(global, "fetch").mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ valid: false, errors: ["Missing required field: transactionId"] }),
+      json: async () => ({
+        valid: false,
+        errors: ["Missing required field: transactionId"],
+      }),
     } as Response);
 
-    const result = await validateEvent({ event: "purchase" }, "https://example.com/purchase.json");
+    const result = await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("Missing required field: transactionId");
   });
 
   it("formats ajv error objects into actionable messages", async () => {
     const ajvErrors = [
-      { instancePath: "/event", keyword: "const", params: { allowedValue: "purchase" }, message: "must be equal to constant" },
-      { instancePath: "", keyword: "required", params: { missingProperty: "transactionId" }, message: "must have required property 'transactionId'" },
+      {
+        instancePath: "/event",
+        keyword: "const",
+        params: { allowedValue: "purchase" },
+        message: "must be equal to constant",
+      },
+      {
+        instancePath: "",
+        keyword: "required",
+        params: { missingProperty: "transactionId" },
+        message: "must have required property 'transactionId'",
+      },
     ];
     vi.spyOn(global, "fetch").mockResolvedValueOnce({
       ok: true,
       json: async () => ({ valid: false, errors: ajvErrors }),
     } as Response);
 
-    const result = await validateEvent({ event: "purchase" }, "https://example.com/purchase.json");
+    const result = await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
     expect(result.errors).toEqual([
       '/event must equal "purchase"',
       "Missing required property: transactionId",
@@ -170,7 +219,10 @@ describe("validateEvent", () => {
   it("returns valid:false with an error message when the validator is unreachable", async () => {
     vi.spyOn(global, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
-    const result = await validateEvent({ event: "purchase" }, "https://example.com/purchase.json");
+    const result = await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/validator.*unreachable|ECONNREFUSED/i);
   });
@@ -181,11 +233,16 @@ describe("validateEvent", () => {
       json: async () => ({ valid: true, errors: [] }),
     } as Response);
 
-    await validateEvent({ event: "purchase" }, "https://example.com/purchase.json");
+    await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
 
     const url = fetchSpy.mock.calls[0][0] as string;
     expect(url).toContain("schema_url=");
-    expect(url).toContain(encodeURIComponent("https://example.com/purchase.json"));
+    expect(url).toContain(
+      encodeURIComponent("https://example.com/purchase.json"),
+    );
     const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
     expect(body.$schema).toBeUndefined();
   });
@@ -198,13 +255,16 @@ describe("validateAll", () => {
 
   it("validates each event and returns a result per event", async () => {
     vi.spyOn(global, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: ["bad"] }) } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ valid: true, errors: [] }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ valid: false, errors: ["bad"] }),
+      } as Response);
 
-    const events = [
-      { event: "purchase" },
-      { event: "add_to_cart" },
-    ];
+    const events = [{ event: "purchase" }, { event: "add_to_cart" }];
     const results = await validateAll(events, schemas, ENTRY_URL);
 
     expect(results).toHaveLength(2);
@@ -224,9 +284,9 @@ describe("validateAll", () => {
     } as Response);
 
     const events = [
-      { event: "gtm.js" },       // no schema match — skip
-      { event: "gtm.dom" },      // no schema match — skip
-      { event: "purchase" },     // known schema — validate
+      { event: "gtm.js" }, // no schema match — skip
+      { event: "gtm.dom" }, // no schema match — skip
+      { event: "purchase" }, // known schema — validate
     ];
     const results = await validateAll(events, schemas, ENTRY_URL);
 
@@ -242,7 +302,11 @@ describe("validateAll", () => {
       json: async () => ({ valid: true, errors: [] }),
     } as Response);
 
-    const results = await validateAll([{ someOtherField: "value" }, { event: "purchase" }], schemas, ENTRY_URL);
+    const results = await validateAll(
+      [{ someOtherField: "value" }, { event: "purchase" }],
+      schemas,
+      ENTRY_URL,
+    );
     expect(results).toHaveLength(1);
     expect(results[0].eventName).toBe("purchase");
   });
@@ -272,24 +336,36 @@ describe("generateReport", () => {
   };
 
   it("reports total event count", () => {
-    const report = generateReport([passing, failing], ["purchase", "add_to_cart"]);
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+    );
     expect(report).toMatch(/2/);
   });
 
   it("lists passing events", () => {
-    const report = generateReport([passing, failing], ["purchase", "add_to_cart"]);
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+    );
     expect(report).toContain("purchase");
     expect(report.toLowerCase()).toMatch(/pass|valid/);
   });
 
   it("lists failing events with their errors", () => {
-    const report = generateReport([passing, failing], ["purchase", "add_to_cart"]);
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+    );
     expect(report).toContain("add_to_cart");
     expect(report).toContain("Missing required field: items");
   });
 
   it("lists expected event types that were not observed", () => {
-    const report = generateReport([passing], ["purchase", "add_to_cart", "page_view"]);
+    const report = generateReport(
+      [passing],
+      ["purchase", "add_to_cart", "page_view"],
+    );
     expect(report).toContain("page_view");
     expect(report.toLowerCase()).toMatch(/not observed|missing|expected/);
   });
@@ -305,14 +381,21 @@ describe("generateReport", () => {
       { event: "add_to_cart" },
       { event: "gtm.js" },
     ];
-    const report = generateReport([passing, failing], ["purchase", "add_to_cart"], allEvents);
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+      allEvents,
+    );
     expect(report).toContain("purchase");
     expect(report).toContain("2");
     expect(report).toContain("gtm.js");
   });
 
   it("does not add a counts section when allEvents is not provided", () => {
-    const report = generateReport([passing, failing], ["purchase", "add_to_cart"]);
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+    );
     // The existing tests still pass — no new section added without allEvents
     expect(report).toContain("purchase");
   });
@@ -354,7 +437,13 @@ describe("countEventsByType", () => {
 describe("saveReportFolder", () => {
   it("creates the folder and returns its path", async () => {
     const baseDir = join(tmpdir(), `tr-test-${randomBytes(4).toString("hex")}`);
-    const folderPath = await saveReportFolder(baseDir, [], [], [], "report text");
+    const folderPath = await saveReportFolder(
+      baseDir,
+      [],
+      [],
+      [],
+      "report text",
+    );
     const { stat } = await import("fs/promises");
     const s = await stat(folderPath);
     expect(s.isDirectory()).toBe(true);
@@ -386,8 +475,18 @@ describe("saveReportFolder", () => {
     ];
     const folderPath = await saveReportFolder(baseDir, events, [], [], "");
     const { readFile } = await import("fs/promises");
-    const purchases = JSON.parse(await readFile(join(folderPath, "events-by-type", "purchase.json"), "utf8"));
-    const cartEvents = JSON.parse(await readFile(join(folderPath, "events-by-type", "add_to_cart.json"), "utf8"));
+    const purchases = JSON.parse(
+      await readFile(
+        join(folderPath, "events-by-type", "purchase.json"),
+        "utf8",
+      ),
+    );
+    const cartEvents = JSON.parse(
+      await readFile(
+        join(folderPath, "events-by-type", "add_to_cart.json"),
+        "utf8",
+      ),
+    );
     expect(purchases).toHaveLength(2);
     expect(cartEvents).toHaveLength(1);
   });
@@ -408,7 +507,10 @@ describe("mergeUniqueEvents", () => {
   it("returns all events when there are no duplicates", () => {
     const a = [{ event: "page_view" }];
     const b = [{ event: "purchase" }];
-    expect(mergeUniqueEvents(a, b)).toEqual([{ event: "page_view" }, { event: "purchase" }]);
+    expect(mergeUniqueEvents(a, b)).toEqual([
+      { event: "page_view" },
+      { event: "purchase" },
+    ]);
   });
 
   it("deduplicates identical events by content", () => {
@@ -444,7 +546,7 @@ describe("startHeadedBrowser", () => {
   it("calls agent-browser close to shut down any running headless daemon", async () => {
     const browserFn = vi.fn().mockResolvedValue("");
     await startHeadedBrowser(browserFn);
-    expect(browserFn).toHaveBeenCalledWith("close");
+    expect(browserFn).toHaveBeenCalledWith(["close"]);
   });
 });
 
@@ -452,13 +554,17 @@ describe("navigateTo", () => {
   it("calls the browser CLI with the target URL", async () => {
     const browserFn = vi.fn().mockResolvedValue("Navigated");
     await navigateTo("https://mysite.com", browserFn);
-    expect(browserFn).toHaveBeenCalledOnce();
-    expect(browserFn.mock.calls[0][0]).toContain("https://mysite.com");
+    expect(browserFn.mock.calls).toEqual([
+      [["open", "https://mysite.com"]],
+      [["wait", "--load", "networkidle"]],
+    ]);
   });
 
   it("resolves without throwing when the browser CLI succeeds", async () => {
     const browserFn = vi.fn().mockResolvedValue("ok");
-    await expect(navigateTo("https://mysite.com", browserFn)).resolves.toBeUndefined();
+    await expect(
+      navigateTo("https://mysite.com", browserFn),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -481,7 +587,10 @@ describe("captureDataLayer", () => {
   it("passes fromIndex to the browser eval", async () => {
     const browserFn = vi.fn().mockResolvedValue("[]");
     await captureDataLayer(5, browserFn);
-    expect(browserFn.mock.calls[0][0]).toContain("5");
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      "JSON.stringify((window.dataLayer || []).slice(5))",
+    ]);
   });
 
   it("returns an empty array when browser returns empty string", async () => {
@@ -502,10 +611,68 @@ describe("captureDataLayer", () => {
   });
 });
 
+describe("parseBrowserJsonArray", () => {
+  it("parses a direct JSON array", () => {
+    expect(parseBrowserJsonArray('[{"event":"purchase"}]')).toEqual([
+      { event: "purchase" },
+    ]);
+  });
+
+  it("parses a double-encoded JSON array", () => {
+    const encoded = JSON.stringify(JSON.stringify([{ event: "purchase" }]));
+    expect(parseBrowserJsonArray(encoded)).toEqual([{ event: "purchase" }]);
+  });
+
+  it("returns an empty array for invalid output", () => {
+    expect(parseBrowserJsonArray("not-json")).toEqual([]);
+  });
+});
+
+describe("runBrowserEval", () => {
+  it("delegates to the browser with argv", async () => {
+    const browserFn = vi.fn().mockResolvedValue("42");
+    await expect(runBrowserEval("1 + 1", browserFn)).resolves.toBe("42");
+    expect(browserFn).toHaveBeenCalledWith(["eval", "1 + 1"]);
+  });
+});
+
+describe("getCurrentUrl", () => {
+  it("strips wrapping quotes from browser eval output", async () => {
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue('"https://example.com/checkout"');
+    await expect(getCurrentUrl(browserFn)).resolves.toBe(
+      "https://example.com/checkout",
+    );
+  });
+});
+
+describe("runAgentBrowser", () => {
+  it("invokes execFile with argv instead of shell interpolation", async () => {
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(null, "ok", "");
+      return {} as never;
+    });
+
+    await expect(
+      runAgentBrowser(["open", 'https://example.com?q=a"b'], execFileFn),
+    ).resolves.toBe("ok");
+    expect(execFileFn).toHaveBeenCalledWith(
+      "agent-browser",
+      ["open", 'https://example.com?q=a"b'],
+      { timeout: 30_000 },
+      expect.any(Function),
+    );
+  });
+});
+
 // ─── saveSession / loadSession ────────────────────────────────────────────────
 
 function tmpFile(): string {
-  return join(tmpdir(), `tracking-agent-test-${randomBytes(6).toString("hex")}.json`);
+  return join(
+    tmpdir(),
+    `tracking-agent-test-${randomBytes(6).toString("hex")}.json`,
+  );
 }
 
 describe("saveSession / loadSession", () => {
@@ -513,7 +680,12 @@ describe("saveSession / loadSession", () => {
     const session: AgentSession = {
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      eventSchemas: [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      eventSchemas: [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
       messages: [{ role: "user", content: "hello" }],
     };
     const path = tmpFile();
@@ -599,7 +771,9 @@ describe("isStuckOutput", () => {
   });
 
   it("returns true for output starting with 'Command failed'", () => {
-    expect(isStuckOutput("Command failed: agent-browser click \"#terms\"")).toBe(true);
+    expect(isStuckOutput('Command failed: agent-browser click "#terms"')).toBe(
+      true,
+    );
   });
 
   it("returns true for output containing 'timed out'", () => {
@@ -620,7 +794,10 @@ describe("replayPlaybook", () => {
   const steps: PlaybookStep[] = [
     { tool: "browser_navigate", args: { url: "https://example.com" } },
     { tool: "browser_click", args: { selector: "#add-to-cart" } },
-    { tool: "browser_fill", args: { selector: "#email", text: "test@test.com" } },
+    {
+      tool: "browser_fill",
+      args: { selector: "#email", text: "test@test.com" },
+    },
   ];
 
   it("returns stuckAtIndex:-1 when all steps succeed", async () => {
@@ -645,7 +822,8 @@ describe("replayPlaybook", () => {
   });
 
   it("returns correct stuckAtIndex when a middle step fails", async () => {
-    const executor = vi.fn()
+    const executor = vi
+      .fn()
       .mockResolvedValueOnce("ok")
       .mockResolvedValueOnce("Error: element not found")
       .mockResolvedValue("ok");
@@ -654,7 +832,8 @@ describe("replayPlaybook", () => {
   });
 
   it("stops executing after the first failure", async () => {
-    const executor = vi.fn()
+    const executor = vi
+      .fn()
       .mockResolvedValueOnce("ok")
       .mockResolvedValueOnce("Error: timed out");
     await replayPlaybook(steps, executor);
@@ -678,7 +857,8 @@ describe("extractPlaybookSteps", () => {
   ];
 
   it("extracts steps from a fenced ```json block", () => {
-    const text = "Here are the steps:\n```json\n" + JSON.stringify(validSteps) + "\n```";
+    const text =
+      "Here are the steps:\n```json\n" + JSON.stringify(validSteps) + "\n```";
     expect(extractPlaybookSteps(text)).toEqual(validSteps);
   });
 
@@ -717,9 +897,15 @@ describe("extractPlaybookSteps", () => {
   });
 
   it("prefers fenced block over bare array when both are present", () => {
-    const fencedSteps = [{ tool: "browser_navigate", args: { url: "https://fenced.com" } }];
+    const fencedSteps = [
+      { tool: "browser_navigate", args: { url: "https://fenced.com" } },
+    ];
     const bareSteps = [{ tool: "browser_click", args: { selector: "#btn" } }];
-    const text = "```json\n" + JSON.stringify(fencedSteps) + "\n```\n" + JSON.stringify(bareSteps);
+    const text =
+      "```json\n" +
+      JSON.stringify(fencedSteps) +
+      "\n```\n" +
+      JSON.stringify(bareSteps);
     expect(extractPlaybookSteps(text)).toEqual(fencedSteps);
   });
 });
@@ -729,13 +915,15 @@ describe("extractPlaybookSteps", () => {
 describe("drainInterceptor", () => {
   it("returns parsed events from the browser eval result", async () => {
     const events = [{ event: "page_view" }, { event: "purchase" }];
-    const browserFn = vi.fn().mockResolvedValue(JSON.stringify(events)) as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify(events)) as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual(events);
   });
 
   it("returns an empty array when the browser returns an empty JSON array", async () => {
-    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([]);
   });
@@ -743,29 +931,33 @@ describe("drainInterceptor", () => {
   it("handles double-encoded output from agent-browser", async () => {
     const events = [{ event: "add_to_cart" }];
     const doubleEncoded = JSON.stringify(JSON.stringify(events));
-    const browserFn = vi.fn().mockResolvedValue(doubleEncoded) as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(doubleEncoded) as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual(events);
   });
 
   it("returns an empty array when the browser call fails", async () => {
-    const browserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi
+      .fn()
+      .mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([]);
   });
 
   it("returns an empty array when browser returns empty string", async () => {
-    const browserFn = vi.fn().mockResolvedValue("") as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue("") as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([]);
   });
 
   it("passes JS containing __dl_intercepted and __dl_buffer to the browser", async () => {
-    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as BrowserFn;
     await drainInterceptor(browserFn);
     const call = vi.mocked(browserFn).mock.calls[0][0];
-    expect(call).toContain("__dl_intercepted");
-    expect(call).toContain("__dl_buffer");
+    expect(call).toEqual(["eval", expect.stringContaining("__dl_intercepted")]);
+    expect(call[1]).toContain("__dl_buffer");
   });
 });
 
@@ -773,32 +965,53 @@ describe("drainInterceptor", () => {
 
 describe("waitForNavigation", () => {
   it("resolves immediately when URL changes on the first poll", async () => {
-    const browserFn = vi.fn()
+    const browserFn = vi
+      .fn()
       .mockResolvedValueOnce('"https://example.com/order-received"') // first URL poll
-      .mockResolvedValueOnce("ok") as unknown as import("./runner.js").BrowserFn;
-    await waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 500 });
-    expect(browserFn).toHaveBeenCalledWith("eval 'window.location.href'");
-    expect(browserFn).toHaveBeenCalledWith("wait --load networkidle");
+      .mockResolvedValueOnce("ok") as unknown as BrowserFn;
+    await waitForNavigation("https://example.com/checkout", browserFn, {
+      intervalMs: 1,
+      maxMs: 500,
+    });
+    expect(browserFn).toHaveBeenCalledWith(["eval", "window.location.href"]);
+    expect(browserFn).toHaveBeenCalledWith(["wait", "--load", "networkidle"]);
   });
 
   it("waits until URL changes then calls networkidle", async () => {
-    const browserFn = vi.fn()
-      .mockResolvedValueOnce('"https://example.com/checkout"')  // still on checkout
+    const browserFn = vi
+      .fn()
+      .mockResolvedValueOnce('"https://example.com/checkout"') // still on checkout
       .mockResolvedValueOnce('"https://example.com/order-received"') // navigated
-      .mockResolvedValueOnce("ok") as unknown as import("./runner.js").BrowserFn;
-    await waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 500 });
-    const calls = vi.mocked(browserFn).mock.calls.map(c => c[0]);
-    expect(calls.filter(c => c === "wait --load networkidle")).toHaveLength(1);
+      .mockResolvedValueOnce("ok") as unknown as BrowserFn;
+    await waitForNavigation("https://example.com/checkout", browserFn, {
+      intervalMs: 1,
+      maxMs: 500,
+    });
+    const calls = vi.mocked(browserFn).mock.calls.map((c) => c[0]);
+    expect(
+      calls.filter(
+        (c) =>
+          JSON.stringify(c) ===
+          JSON.stringify(["wait", "--load", "networkidle"]),
+      ),
+    ).toHaveLength(1);
   });
 
   it("times out silently when URL never changes", async () => {
-    const browserFn = vi.fn().mockResolvedValue('"https://example.com/checkout"') as unknown as import("./runner.js").BrowserFn;
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(
+        '"https://example.com/checkout"',
+      ) as unknown as BrowserFn;
     await expect(
-      waitForNavigation("https://example.com/checkout", browserFn, { intervalMs: 1, maxMs: 10 })
+      waitForNavigation("https://example.com/checkout", browserFn, {
+        intervalMs: 1,
+        maxMs: 10,
+      }),
     ).resolves.toBeUndefined();
     // networkidle should NOT have been called
-    const calls = vi.mocked(browserFn).mock.calls.map(c => c[0]);
-    expect(calls).not.toContain("wait --load networkidle");
+    const calls = vi.mocked(browserFn).mock.calls.map((c) => c[0]);
+    expect(calls).not.toContainEqual(["wait", "--load", "networkidle"]);
   });
 });
 

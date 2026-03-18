@@ -1,20 +1,82 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import type { EventSchema } from "./schema.js";
 
+export const VALIDATOR_BASE_URL =
+  process.env.VALIDATOR_URL ?? "http://localhost:3000";
 
-export const VALIDATOR_BASE_URL = process.env.VALIDATOR_URL ?? "http://localhost:3000";
+export type BrowserFn = (args: string[]) => Promise<string>;
 
-export type BrowserFn = (args: string) => Promise<string>;
+type ExecFileCallback = (
+  error: Error | null,
+  stdout: string,
+  stderr: string,
+) => void;
+type ExecFileFn = (
+  file: string,
+  args: readonly string[],
+  options: { timeout: number },
+  callback: ExecFileCallback,
+) => unknown;
 
-export function defaultBrowserFn(args: string): Promise<string> {
+type ExecFileError = Error & {
+  stdout?: string;
+  stderr?: string;
+};
+
+export function runAgentBrowser(
+  args: string[],
+  execFileFn: ExecFileFn = execFile,
+): Promise<string> {
   return new Promise((resolve) => {
-    exec(`agent-browser ${args}`, { timeout: 30_000 }, (err, stdout, stderr) => {
-      if (err) resolve(err.stdout?.trim() || err.stderr?.trim() || err.message);
-      else resolve(stdout?.trim() || stderr?.trim() || "");
-    });
+    execFileFn(
+      "agent-browser",
+      args,
+      { timeout: 30_000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const execErr = err as ExecFileError;
+          resolve(
+            execErr.stdout?.trim() ||
+              execErr.stderr?.trim() ||
+              stderr?.trim() ||
+              err.message,
+          );
+        } else resolve(stdout?.trim() || stderr?.trim() || "");
+      },
+    );
   });
+}
+
+export function defaultBrowserFn(args: string[]): Promise<string> {
+  return runAgentBrowser(args);
+}
+
+export async function runBrowserEval(
+  js: string,
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<string> {
+  return browser(["eval", js]);
+}
+
+export function parseBrowserJsonArray(text: string): unknown[] {
+  try {
+    const parsed = JSON.parse(text || "[]");
+    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+    return Array.isArray(result) ? (result as unknown[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getCurrentUrl(
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<string> {
+  const out = await runBrowserEval("window.location.href", browser).catch(
+    () => "",
+  );
+  return out.trim().replace(/^"|"$/g, "");
 }
 
 export interface ValidationResult {
@@ -45,7 +107,11 @@ export function resolveSchemaForEvent(
     return { eventName: undefined, schemaUrl: entryUrl };
   }
   const match = eventSchemas.find((s) => s.eventName === eventName);
-  return { eventName, schemaUrl: match?.schemaUrl ?? entryUrl, canonicalUrl: match?.canonicalUrl };
+  return {
+    eventName,
+    schemaUrl: match?.schemaUrl ?? entryUrl,
+    canonicalUrl: match?.canonicalUrl,
+  };
 }
 
 // ─── formatAjvError ───────────────────────────────────────────────────────────
@@ -55,28 +121,33 @@ export function formatAjvError(e: unknown): string {
   if (e === null || typeof e !== "object") return JSON.stringify(e);
 
   const err = e as Record<string, unknown>;
-  const instancePath = typeof err["instancePath"] === "string" ? err["instancePath"] : "";
+  const instancePath =
+    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
   const keyword = typeof err["keyword"] === "string" ? err["keyword"] : "";
-  const params = (err["params"] !== null && typeof err["params"] === "object")
-    ? err["params"] as Record<string, unknown>
-    : {};
+  const params =
+    err["params"] !== null && typeof err["params"] === "object"
+      ? (err["params"] as Record<string, unknown>)
+      : {};
   const message = typeof err["message"] === "string" ? err["message"] : "";
   const prefix = instancePath ? `${instancePath} ` : "";
 
   switch (keyword) {
     case "const": {
       const allowedValue = params["allowedValue"];
-      if (allowedValue !== undefined) return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
+      if (allowedValue !== undefined)
+        return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
       break;
     }
     case "required": {
       const missingProperty = params["missingProperty"];
-      if (typeof missingProperty === "string") return `Missing required property: ${missingProperty}`;
+      if (typeof missingProperty === "string")
+        return `Missing required property: ${missingProperty}`;
       break;
     }
     case "additionalProperties": {
       const additionalProperty = params["additionalProperty"];
-      if (typeof additionalProperty === "string") return `Unexpected property: ${additionalProperty}`;
+      if (typeof additionalProperty === "string")
+        return `Unexpected property: ${additionalProperty}`;
       break;
     }
   }
@@ -118,7 +189,11 @@ export async function validateAll(
   const results: EventValidationResult[] = [];
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
-    const { eventName, schemaUrl } = resolveSchemaForEvent(event, eventSchemas, entryUrl);
+    const { eventName, schemaUrl } = resolveSchemaForEvent(
+      event,
+      eventSchemas,
+      entryUrl,
+    );
     // Only validate events that match a known schema — skip GTM internals and unrecognised events
     if (schemaUrl === entryUrl) continue;
     const result = await validateEvent(event, schemaUrl, fetchFn);
@@ -152,7 +227,9 @@ export function generateReport(
 ): string {
   const passing = results.filter((r) => r.result.valid);
   const failing = results.filter((r) => !r.result.valid);
-  const observedNames = new Set(results.map((r) => r.eventName).filter(Boolean));
+  const observedNames = new Set(
+    results.map((r) => r.eventName).filter(Boolean),
+  );
   const notObserved = expectedNames.filter((n) => !observedNames.has(n));
 
   const lines: string[] = [];
@@ -195,7 +272,9 @@ export function generateReport(
   }
 
   if (notObserved.length > 0) {
-    lines.push(`  ⚠ Expected events not observed — these are missing from the dataLayer`);
+    lines.push(
+      `  ⚠ Expected events not observed — these are missing from the dataLayer`,
+    );
     for (const name of notObserved) {
       const schema = eventSchemas?.find((s) => s.eventName === name);
       const desc = schema?.description ? ` — ${schema.description}` : "";
@@ -217,12 +296,19 @@ export async function saveReportFolder(
   expectedNames: string[],
   report: string,
 ): Promise<string> {
-  const timestamp = new Date().toISOString().replace(/:/g, "-").replace(/\..+/, "");
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/:/g, "-")
+    .replace(/\..+/, "");
   const folderPath = join(baseDir, timestamp);
   await mkdir(folderPath, { recursive: true });
 
   await writeFile(join(folderPath, "report.txt"), report, "utf8");
-  await writeFile(join(folderPath, "events.json"), JSON.stringify(allEvents, null, 2), "utf8");
+  await writeFile(
+    join(folderPath, "events.json"),
+    JSON.stringify(allEvents, null, 2),
+    "utf8",
+  );
 
   const byTypeDir = join(folderPath, "events-by-type");
   await mkdir(byTypeDir, { recursive: true });
@@ -240,7 +326,11 @@ export async function saveReportFolder(
   }
   for (const [name, events] of groups) {
     const filename = name.replace(/[^a-zA-Z0-9._-]/g, "_") + ".json";
-    await writeFile(join(byTypeDir, filename), JSON.stringify(events, null, 2), "utf8");
+    await writeFile(
+      join(byTypeDir, filename),
+      JSON.stringify(events, null, 2),
+      "utf8",
+    );
   }
 
   return folderPath;
@@ -263,16 +353,20 @@ export function mergeUniqueEvents(a: unknown[], b: unknown[]): unknown[] {
 
 // ─── startHeadedBrowser ───────────────────────────────────────────────────────
 
-export async function startHeadedBrowser(browser: BrowserFn = defaultBrowserFn): Promise<void> {
+export async function startHeadedBrowser(
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<void> {
   process.env["AGENT_BROWSER_HEADED"] = "true";
   // Close any running headless daemon so the next call starts a fresh headed instance
-  await browser("close").catch(() => {});
+  await browser(["close"]).catch(() => {});
 }
 
 // ─── closeBrowser ─────────────────────────────────────────────────────────────
 
-export async function closeBrowser(browser: BrowserFn = defaultBrowserFn): Promise<void> {
-  await browser("close").catch(() => {});
+export async function closeBrowser(
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<void> {
+  await browser(["close"]).catch(() => {});
 }
 
 // ─── navigateTo ───────────────────────────────────────────────────────────────
@@ -281,7 +375,8 @@ export async function navigateTo(
   url: string,
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<void> {
-  await browser(`open "${url}" && agent-browser wait --load networkidle`);
+  await browser(["open", url]);
+  await browser(["wait", "--load", "networkidle"]);
 }
 
 // ─── waitForNavigation ────────────────────────────────────────────────────────
@@ -293,14 +388,17 @@ export async function navigateTo(
 export async function waitForNavigation(
   fromUrl: string,
   browser: BrowserFn = defaultBrowserFn,
-  { intervalMs = 500, maxMs = 10_000 }: { intervalMs?: number; maxMs?: number } = {},
+  {
+    intervalMs = 500,
+    maxMs = 10_000,
+  }: { intervalMs?: number; maxMs?: number } = {},
 ): Promise<void> {
   const attempts = Math.ceil(maxMs / intervalMs);
   for (let i = 0; i < attempts; i++) {
-    await new Promise(r => setTimeout(r, intervalMs));
-    const currentUrl = await browser("eval 'window.location.href'").catch(() => fromUrl);
-    if (currentUrl.trim().replace(/^"|"$/g, "") !== fromUrl) {
-      await browser("wait --load networkidle").catch(() => {});
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const currentUrl = await getCurrentUrl(browser).catch(() => fromUrl);
+    if (currentUrl !== fromUrl) {
+      await browser(["wait", "--load", "networkidle"]).catch(() => {});
       return;
     }
   }
@@ -313,17 +411,8 @@ export async function captureDataLayer(
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<unknown[]> {
   const js = `JSON.stringify((window.dataLayer || []).slice(${fromIndex}))`;
-  const escaped = js.replace(/'/g, `'\\''`);
-  const out = await browser(`eval '${escaped}'`);
-  try {
-    const parsed = JSON.parse(out || "[]");
-    // agent-browser eval JSON-encodes string results, so JSON.stringify(dataLayer) inside
-    // the eval produces a string that agent-browser wraps in quotes. Double-parse if needed.
-    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
-    return Array.isArray(result) ? result as unknown[] : [];
-  } catch {
-    return [];
-  }
+  const out = await runBrowserEval(js, browser);
+  return parseBrowserJsonArray(out);
 }
 
 // ─── drainInterceptor ─────────────────────────────────────────────────────────
@@ -336,8 +425,8 @@ export async function captureDataLayer(
 // If the page has changed, the interceptor is gone — this auto-detects that,
 // re-installs, and returns the full dataLayer from the new page.
 //
-// The injected JS avoids single quotes so it is safe to wrap in shell
-// single-quote delimiters for agent-browser eval '...'.
+// The injected JS is evaluated directly in the browser context and drained after
+// each action so post-navigation events are not lost.
 
 export async function drainInterceptor(
   browser: BrowserFn = defaultBrowserFn,
@@ -357,15 +446,8 @@ export async function drainInterceptor(
     "  return JSON.stringify(events);",
     "})()",
   ].join(" ");
-  const escaped = js.replace(/'/g, `'\\''`);
-  const out = await browser(`eval '${escaped}'`).catch(() => "");
-  try {
-    const parsed = JSON.parse(out || "[]");
-    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
-    return Array.isArray(result) ? result as unknown[] : [];
-  } catch {
-    return [];
-  }
+  const out = await runBrowserEval(js, browser).catch(() => "");
+  return parseBrowserJsonArray(out);
 }
 
 // ─── Session persistence ──────────────────────────────────────────────────────
@@ -377,7 +459,10 @@ export interface AgentSession {
   messages: unknown[];
 }
 
-export async function saveSession(filePath: string, session: AgentSession): Promise<void> {
+export async function saveSession(
+  filePath: string,
+  session: AgentSession,
+): Promise<void> {
   await writeFile(filePath, JSON.stringify(session, null, 2), "utf8");
 }
 
@@ -436,7 +521,10 @@ export async function replayPlaybook(
   return { stuckAtIndex: -1 };
 }
 
-export async function savePlaybook(filePath: string, playbook: Playbook): Promise<void> {
+export async function savePlaybook(
+  filePath: string,
+  playbook: Playbook,
+): Promise<void> {
   await writeFile(filePath, JSON.stringify(playbook, null, 2), "utf8");
 }
 
@@ -466,7 +554,9 @@ export function extractPlaybookSteps(text: string): PlaybookStep[] | null {
     try {
       const parsed: unknown = JSON.parse(fenced[1]);
       if (isValidSteps(parsed)) return parsed;
-    } catch { /* try next */ }
+    } catch {
+      /* try next */
+    }
   }
 
   // 2. Try bare JSON array
@@ -475,7 +565,9 @@ export function extractPlaybookSteps(text: string): PlaybookStep[] | null {
     try {
       const parsed: unknown = JSON.parse(arrayMatch[0]);
       if (isValidSteps(parsed)) return parsed;
-    } catch { /* not valid */ }
+    } catch {
+      /* not valid */
+    }
   }
 
   return null;

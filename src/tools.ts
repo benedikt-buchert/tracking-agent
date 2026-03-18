@@ -4,6 +4,8 @@ import {
   defaultBrowserFn,
   captureDataLayer,
   drainInterceptor,
+  runBrowserEval,
+  parseBrowserJsonArray,
 } from "./runner.js";
 import type { BrowserFn } from "./runner.js";
 
@@ -27,9 +29,9 @@ export function createNavigateTool(
     label: "Navigating browser",
     parameters: NavigateParams,
     execute: async (_id, { url }) => {
-      const out = await browserFn(
-        `open "${url}" && agent-browser wait --load networkidle`,
-      );
+      const navOut = await browserFn(["open", url]);
+      const waitOut = await browserFn(["wait", "--load", "networkidle"]);
+      const out = waitOut || navOut;
       return textResult(out || "Navigated successfully");
     },
   };
@@ -58,8 +60,8 @@ export function createSnapshotTool(
     label: "Taking snapshot",
     parameters: SnapshotParams,
     execute: async (_id, { interactive_only }) => {
-      const flag = interactive_only ? " -i" : "";
-      const out = await browserFn(`snapshot${flag}`);
+      const args = interactive_only ? ["snapshot", "-i"] : ["snapshot"];
+      const out = await browserFn(args);
       return textResult(out);
     },
   };
@@ -85,7 +87,7 @@ export function createClickTool(
     label: "Clicking element",
     parameters: ClickParams,
     execute: async (_id, { selector }) => {
-      const out = await browserFn(`click "${selector}"`);
+      const out = await browserFn(["click", selector]);
       return textResult(out || "Clicked");
     },
   };
@@ -109,7 +111,7 @@ export function createFillTool(
     label: "Filling input",
     parameters: FillParams,
     execute: async (_id, { selector, text }) => {
-      const out = await browserFn(`fill "${selector}" "${text}"`);
+      const out = await browserFn(["fill", selector, text]);
       return textResult(out || "Filled");
     },
   };
@@ -135,8 +137,7 @@ export function createEvalTool(
     label: "Running JS",
     parameters: EvalParams,
     execute: async (_id, { js }) => {
-      const escaped = js.replace(/'/g, `'\\''`);
-      const out = await browserFn(`eval '${escaped}'`);
+      const out = await runBrowserEval(js, browserFn);
       return textResult(out);
     },
   };
@@ -161,8 +162,7 @@ export function createScreenshotTool(
     label: "Taking screenshot",
     parameters: ScreenshotParams,
     execute: async (_id, { path }) => {
-      const arg = path ? ` "${path}"` : "";
-      const out = await browserFn(`screenshot${arg}`);
+      const out = await browserFn(path ? ["screenshot", path] : ["screenshot"]);
       return textResult(out || "Screenshot taken");
     },
   };
@@ -173,10 +173,27 @@ export const screenshotTool = createScreenshotTool();
 // ─── Tool: wait ───────────────────────────────────────────────────────────────
 
 const WaitParams = Type.Object({
-  target: Type.String({
-    description:
-      "CSS selector to wait for, or number of milliseconds (e.g. '1000'), or '--load networkidle'",
-  }),
+  target: Type.Optional(
+    Type.String({
+      description:
+        "Deprecated compatibility form for waits (e.g. selector, '1000', or '--load networkidle')",
+    }),
+  ),
+  selector: Type.Optional(
+    Type.String({
+      description: "CSS selector to wait for",
+    }),
+  ),
+  ms: Type.Optional(
+    Type.Number({
+      description: "Milliseconds to wait",
+    }),
+  ),
+  load: Type.Optional(
+    Type.Union([Type.Literal("networkidle")], {
+      description: "Page load state to wait for",
+    }),
+  ),
 });
 
 export function createWaitTool(
@@ -188,8 +205,15 @@ export function createWaitTool(
       "Wait for an element to appear, a condition, or a time period.",
     label: "Waiting",
     parameters: WaitParams,
-    execute: async (_id, { target }) => {
-      const out = await browserFn(`wait ${target}`);
+    execute: async (_id, { target, selector, ms, load }) => {
+      const args = load
+        ? ["wait", "--load", load]
+        : selector
+          ? ["wait", selector]
+          : target?.startsWith("--load ")
+            ? ["wait", "--load", target.slice("--load ".length)]
+            : ["wait", String(target ?? ms ?? 0)];
+      const out = await browserFn(args);
       return textResult(out || "Wait complete");
     },
   };
@@ -220,8 +244,7 @@ export function createGetDataLayerTool(
     execute: async (_id, { from_index }) => {
       const idx = from_index ?? 0;
       const js = `JSON.stringify((window.dataLayer || []).slice(${idx}))`;
-      const escaped = js.replace(/'/g, `'\\''`);
-      const out = await browserFn(`eval '${escaped}'`);
+      const out = await runBrowserEval(js, browserFn);
       return textResult(out || "[]");
     },
   };
@@ -241,10 +264,7 @@ export function createAccumulatingGetDataLayerTool(
       const text =
         (result.content[0] as { type: string; text: string }).text || "[]";
       try {
-        // agent-browser eval double-encodes string results — same logic as captureDataLayer
-        const parsed = JSON.parse(text);
-        const events = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
-        if (Array.isArray(events)) accumulator.push(...events);
+        accumulator.push(...parseBrowserJsonArray(text));
       } catch {
         /* non-fatal */
       }
@@ -309,7 +329,7 @@ export function createRequestHumanInputTool(
 export const requestHumanInputTool = createRequestHumanInputTool(
   defaultReadLine,
   (s) => process.stderr.write(s),
-  () => defaultBrowserFn("eval 'window.location.href'"),
+  () => runBrowserEval("window.location.href", defaultBrowserFn),
 );
 
 // ─── Tool: find ───────────────────────────────────────────────────────────────
@@ -344,10 +364,9 @@ export function createFindTool(
     label: "Finding element",
     parameters: FindParams,
     execute: async (_id, { locator, value, action, fill_text }) => {
-      const extra = action === "fill" && fill_text ? ` "${fill_text}"` : "";
-      const out = await browserFn(
-        `find ${locator} "${value}" ${action}${extra}`,
-      );
+      const args = ["find", locator, value, action];
+      if (action === "fill" && fill_text) args.push(fill_text);
+      const out = await browserFn(args);
       return textResult(out || "Done");
     },
   };
@@ -416,7 +435,12 @@ export function createDataLayerInterceptor(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createAllTools(
   browserFn: BrowserFn = defaultBrowserFn,
-): AgentTool<any>[] {
+): AnyTool[] {
+  const requestHumanInput = createRequestHumanInputTool(
+    defaultReadLine,
+    (s) => process.stderr.write(s),
+    () => runBrowserEval("window.location.href", browserFn),
+  );
   return [
     createNavigateTool(browserFn),
     createSnapshotTool(browserFn),
@@ -427,7 +451,7 @@ export function createAllTools(
     createWaitTool(browserFn),
     createGetDataLayerTool(browserFn),
     createScreenshotTool(browserFn),
-    requestHumanInputTool,
+    requestHumanInput,
   ];
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { BrowserFn } from "./runner.js";
 import {
   navigateTool,
@@ -32,6 +32,11 @@ function mockBrowser(response = "ok"): BrowserFn {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // ─── allTools ─────────────────────────────────────────────────────────────────
@@ -62,26 +67,30 @@ describe("createNavigateTool", () => {
     const browserFn = mockBrowser();
     const tool = createNavigateTool(browserFn);
     await tool.execute("1", { url: "https://example.com" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('"https://example.com"'));
+    expect(browserFn).toHaveBeenCalledWith(["open", "https://example.com"]);
   });
 
   it("waits for networkidle after navigation", async () => {
     const browserFn = mockBrowser();
     const tool = createNavigateTool(browserFn);
     await tool.execute("1", { url: "https://example.com" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("networkidle"));
+    expect(browserFn).toHaveBeenCalledWith(["wait", "--load", "networkidle"]);
   });
 
   it("returns agent-browser output as text", async () => {
     const tool = createNavigateTool(mockBrowser("Navigation complete"));
     const result = await tool.execute("1", { url: "https://foo.com" });
-    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
+    expect((result.content[0] as { text: string }).text).toBe(
+      "Navigation complete",
+    );
   });
 
   it("returns fallback message when output is empty", async () => {
     const tool = createNavigateTool(mockBrowser(""));
     const result = await tool.execute("1", { url: "https://foo.com" });
-    expect((result.content[0] as { text: string }).text).toBe("Navigated successfully");
+    expect((result.content[0] as { text: string }).text).toBe(
+      "Navigated successfully",
+    );
   });
 });
 
@@ -98,21 +107,22 @@ describe("createSnapshotTool", () => {
     const browserFn = mockBrowser("tree");
     const tool = createSnapshotTool(browserFn);
     await tool.execute("1", {});
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("snapshot"));
-    expect(vi.mocked(browserFn).mock.calls[0][0]).not.toContain("-i");
+    expect(browserFn).toHaveBeenCalledWith(["snapshot"]);
   });
 
   it("adds -i flag when interactive_only is true", async () => {
     const browserFn = mockBrowser("tree");
     const tool = createSnapshotTool(browserFn);
     await tool.execute("1", { interactive_only: true });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("snapshot -i"));
+    expect(browserFn).toHaveBeenCalledWith(["snapshot", "-i"]);
   });
 
   it("returns snapshot output", async () => {
     const tool = createSnapshotTool(mockBrowser("- button @e1\n- link @e2"));
     const result = await tool.execute("1", {});
-    expect((result.content[0] as { text: string }).text).toBe("- button @e1\n- link @e2");
+    expect((result.content[0] as { text: string }).text).toBe(
+      "- button @e1\n- link @e2",
+    );
   });
 });
 
@@ -128,7 +138,7 @@ describe("createClickTool", () => {
     const browserFn = mockBrowser("clicked");
     const tool = createClickTool(browserFn);
     await tool.execute("1", { selector: "@e3" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('click "@e3"'));
+    expect(browserFn).toHaveBeenCalledWith(["click", "@e3"]);
   });
 
   it("returns fallback when output is empty", async () => {
@@ -140,7 +150,9 @@ describe("createClickTool", () => {
   it("returns browser error output as text", async () => {
     const tool = createClickTool(mockBrowser("Error: element not found: @e99"));
     const result = await tool.execute("1", { selector: "@e99" });
-    expect((result.content[0] as { text: string }).text).toContain("element not found");
+    expect((result.content[0] as { text: string }).text).toContain(
+      "element not found",
+    );
   });
 });
 
@@ -156,7 +168,7 @@ describe("createFillTool", () => {
     const browserFn = mockBrowser("filled");
     const tool = createFillTool(browserFn);
     await tool.execute("1", { selector: "@e1", text: "hello" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('fill "@e1" "hello"'));
+    expect(browserFn).toHaveBeenCalledWith(["fill", "@e1", "hello"]);
   });
 });
 
@@ -172,7 +184,7 @@ describe("createEvalTool", () => {
     const browserFn = mockBrowser("42");
     const tool = createEvalTool(browserFn);
     const result = await tool.execute("1", { js: "1 + 1" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("1 + 1"));
+    expect(browserFn).toHaveBeenCalledWith(["eval", "1 + 1"]);
     expect((result.content[0] as { text: string }).text).toBe("42");
   });
 });
@@ -188,8 +200,22 @@ describe("createWaitTool", () => {
   it("calls browserFn with wait and the target", async () => {
     const browserFn = mockBrowser("done");
     const tool = createWaitTool(browserFn);
-    await tool.execute("1", { target: "1000" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("wait 1000"));
+    await tool.execute("1", { ms: 1000 });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "1000"]);
+  });
+
+  it("uses structured load-state parameters", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", { load: "networkidle" });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "--load", "networkidle"]);
+  });
+
+  it("passes a selector wait through as a single argv item", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", { selector: ".checkout button" });
+    expect(browserFn).toHaveBeenCalledWith(["wait", ".checkout button"]);
   });
 });
 
@@ -205,16 +231,23 @@ describe("createGetDataLayerTool", () => {
     const browserFn = mockBrowser('[{"event":"pageView"}]');
     const tool = createGetDataLayerTool(browserFn);
     const result = await tool.execute("1", {});
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("dataLayer"));
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("slice(0)"));
-    expect((result.content[0] as { text: string }).text).toBe('[{"event":"pageView"}]');
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      "JSON.stringify((window.dataLayer || []).slice(0))",
+    ]);
+    expect((result.content[0] as { text: string }).text).toBe(
+      '[{"event":"pageView"}]',
+    );
   });
 
   it("slices from from_index when provided", async () => {
     const browserFn = mockBrowser('[{"event":"click"}]');
     const tool = createGetDataLayerTool(browserFn);
     await tool.execute("1", { from_index: 3 });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("slice(3)"));
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      "JSON.stringify((window.dataLayer || []).slice(3))",
+    ]);
   });
 
   it("returns empty array string when browser returns nothing", async () => {
@@ -235,7 +268,10 @@ describe("createAccumulatingGetDataLayerTool", () => {
   it("appends parsed events to the accumulator on each call", async () => {
     const events = [{ event: "page_view" }, { event: "purchase" }];
     const acc: unknown[] = [];
-    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(JSON.stringify(events)));
+    const tool = createAccumulatingGetDataLayerTool(
+      acc,
+      mockBrowser(JSON.stringify(events)),
+    );
     await tool.execute("1", {});
     expect(acc).toEqual(events);
   });
@@ -243,16 +279,22 @@ describe("createAccumulatingGetDataLayerTool", () => {
   it("handles double-encoded output from agent-browser", async () => {
     const events = [{ event: "add_to_cart" }];
     const acc: unknown[] = [];
-    const tool = createAccumulatingGetDataLayerTool(acc, mockBrowser(JSON.stringify(JSON.stringify(events))));
+    const tool = createAccumulatingGetDataLayerTool(
+      acc,
+      mockBrowser(JSON.stringify(JSON.stringify(events))),
+    );
     await tool.execute("1", {});
     expect(acc).toEqual(events);
   });
 
   it("accumulates across multiple calls", async () => {
     const acc: unknown[] = [];
-    const browserFn = (vi.fn()
+    const browserFn = vi
+      .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "purchase" }]))) as unknown as BrowserFn;
+      .mockResolvedValueOnce(
+        JSON.stringify([{ event: "purchase" }]),
+      ) as unknown as BrowserFn;
     const tool = createAccumulatingGetDataLayerTool(acc, browserFn);
     await tool.execute("1", {});
     await tool.execute("1", { from_index: 1 });
@@ -281,14 +323,14 @@ describe("createScreenshotTool", () => {
     const browserFn = mockBrowser("screenshot taken");
     const tool = createScreenshotTool(browserFn);
     await tool.execute("1", {});
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining("screenshot"));
+    expect(browserFn).toHaveBeenCalledWith(["screenshot"]);
   });
 
   it("passes the path argument when provided", async () => {
     const browserFn = mockBrowser("ok");
     const tool = createScreenshotTool(browserFn);
     await tool.execute("1", { path: "/tmp/shot.png" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('"/tmp/shot.png"'));
+    expect(browserFn).toHaveBeenCalledWith(["screenshot", "/tmp/shot.png"]);
   });
 });
 
@@ -297,15 +339,30 @@ describe("createFindTool", () => {
   it("builds correct command for click by role", async () => {
     const browserFn = mockBrowser("clicked");
     const tool = createFindTool(browserFn);
-    await tool.execute("1", { locator: "role", value: "button", action: "click" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('find role "button" click'));
+    await tool.execute("1", {
+      locator: "role",
+      value: "button",
+      action: "click",
+    });
+    expect(browserFn).toHaveBeenCalledWith(["find", "role", "button", "click"]);
   });
 
   it("builds correct command for fill by label", async () => {
     const browserFn = mockBrowser("filled");
     const tool = createFindTool(browserFn);
-    await tool.execute("1", { locator: "label", value: "Email", action: "fill", fill_text: "test@example.com" });
-    expect(browserFn).toHaveBeenCalledWith(expect.stringContaining('find label "Email" fill "test@example.com"'));
+    await tool.execute("1", {
+      locator: "label",
+      value: "Email",
+      action: "fill",
+      fill_text: "test@example.com",
+    });
+    expect(browserFn).toHaveBeenCalledWith([
+      "find",
+      "label",
+      "Email",
+      "fill",
+      "test@example.com",
+    ]);
   });
 });
 
@@ -325,6 +382,16 @@ describe("createAllTools", () => {
     expect(browserFn).toHaveBeenCalled();
   });
 
+  it("builds request_human_input with the injected browserFn", async () => {
+    const browserFn = mockBrowser("https://example.com/current");
+    const tools = createAllTools(browserFn);
+    const requestHumanInput = tools.find(
+      (t) => t.name === "request_human_input",
+    )!;
+    await requestHumanInput.execute("1", { message: "Continue manually" });
+    expect(browserFn).toHaveBeenCalledWith(["eval", "window.location.href"]);
+  });
+
   it("returns the same number of tools as allTools", () => {
     expect(createAllTools(mockBrowser())).toHaveLength(allTools.length);
   });
@@ -336,7 +403,9 @@ describe("requestHumanInputTool", () => {
   it("writes the agent message to the err stream", async () => {
     const written: string[] = [];
     const readLineFn = vi.fn().mockResolvedValue("");
-    const tool = createRequestHumanInputTool(readLineFn, (s) => written.push(s));
+    const tool = createRequestHumanInputTool(readLineFn, (s) =>
+      written.push(s),
+    );
     await tool.execute("1", { message: "Please log in first" });
     expect(written.join("")).toContain("Please log in first");
   });
@@ -351,8 +420,12 @@ describe("requestHumanInputTool", () => {
   it("returns a message indicating the agent may continue", async () => {
     const readLineFn = vi.fn().mockResolvedValue("");
     const tool = createRequestHumanInputTool(readLineFn, () => {});
-    const result = await tool.execute("1", { message: "Enter payment details" });
-    expect((result.content[0] as { text: string }).text.toLowerCase()).toMatch(/continue|done|completed/);
+    const result = await tool.execute("1", {
+      message: "Enter payment details",
+    });
+    expect((result.content[0] as { text: string }).text.toLowerCase()).toMatch(
+      /continue|done|completed/,
+    );
   });
 
   it("is included in allTools", () => {
@@ -376,9 +449,12 @@ describe("createDataLayerInterceptor", () => {
 
   it("accumulates across multiple calls without double-counting", async () => {
     const acc: unknown[] = [];
-    const interceptBrowserFn = (vi.fn()
+    const interceptBrowserFn = vi
+      .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "add_to_cart" }]))) as unknown as BrowserFn;
+      .mockResolvedValueOnce(
+        JSON.stringify([{ event: "add_to_cart" }]),
+      ) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
     await tool.execute("1", { url: "https://a.com" });
@@ -389,25 +465,36 @@ describe("createDataLayerInterceptor", () => {
   it("returns the original tool result unchanged", async () => {
     const acc: unknown[] = [];
     const intercept = createDataLayerInterceptor(acc, mockBrowser("[]"));
-    const tool = intercept(createNavigateTool(mockBrowser("Navigation complete")));
+    const tool = intercept(
+      createNavigateTool(mockBrowser("Navigation complete")),
+    );
     const result = await tool.execute("1", { url: "https://example.com" });
-    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
+    expect((result.content[0] as { text: string }).text).toBe(
+      "Navigation complete",
+    );
   });
 
   it("does not throw when drain fails", async () => {
     const acc: unknown[] = [];
-    const failingBrowserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
+    const failingBrowserFn = vi
+      .fn()
+      .mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(acc, failingBrowserFn);
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
-    await expect(tool.execute("1", { url: "https://example.com" })).resolves.toBeDefined();
+    await expect(
+      tool.execute("1", { url: "https://example.com" }),
+    ).resolves.toBeDefined();
     expect(acc).toEqual([]);
   });
 
   it("shares state across multiple wrapped tools", async () => {
     const acc: unknown[] = [];
-    const interceptBrowserFn = (vi.fn()
+    const interceptBrowserFn = vi
+      .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "click" }]))) as unknown as BrowserFn;
+      .mockResolvedValueOnce(
+        JSON.stringify([{ event: "click" }]),
+      ) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
     const navigate = intercept(createNavigateTool(mockBrowser("ok")));
     const click = intercept(createClickTool(mockBrowser("ok")));
@@ -431,16 +518,22 @@ describe("createDataLayerPoller", () => {
 
   it("advances the dataLayer index so subsequent calls do not double-count", async () => {
     const acc: unknown[] = [];
-    const pollBrowserFn = (vi.fn()
+    const pollBrowserFn = vi
+      .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "add_to_cart" }]))) as unknown as BrowserFn;
+      .mockResolvedValueOnce(
+        JSON.stringify([{ event: "add_to_cart" }]),
+      ) as unknown as BrowserFn;
     const poll = createDataLayerPoller(acc, pollBrowserFn);
     const tool = poll(createNavigateTool(mockBrowser("ok")));
     await tool.execute("1", { url: "https://a.com" });
     await tool.execute("1", { url: "https://b.com" });
     expect(acc).toEqual([{ event: "page_view" }, { event: "add_to_cart" }]);
     // Second poll must use slice(1), not slice(0)
-    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toContain("slice(1)");
+    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toEqual([
+      "eval",
+      "JSON.stringify((window.dataLayer || []).slice(1))",
+    ]);
   });
 
   it("returns the original tool result unchanged", async () => {
@@ -448,30 +541,42 @@ describe("createDataLayerPoller", () => {
     const poll = createDataLayerPoller(acc, mockBrowser("[]"));
     const tool = poll(createNavigateTool(mockBrowser("Navigation complete")));
     const result = await tool.execute("1", { url: "https://example.com" });
-    expect((result.content[0] as { text: string }).text).toBe("Navigation complete");
+    expect((result.content[0] as { text: string }).text).toBe(
+      "Navigation complete",
+    );
   });
 
   it("does not throw when dataLayer capture fails", async () => {
     const acc: unknown[] = [];
-    const failingBrowserFn = vi.fn().mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
+    const failingBrowserFn = vi
+      .fn()
+      .mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
     const poll = createDataLayerPoller(acc, failingBrowserFn);
     const tool = poll(createNavigateTool(mockBrowser("ok")));
-    await expect(tool.execute("1", { url: "https://example.com" })).resolves.toBeDefined();
+    await expect(
+      tool.execute("1", { url: "https://example.com" }),
+    ).resolves.toBeDefined();
     expect(acc).toEqual([]);
   });
 
   it("shares the index across multiple wrapped tools", async () => {
     const acc: unknown[] = [];
-    const pollBrowserFn = (vi.fn()
+    const pollBrowserFn = vi
+      .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "click" }]))) as unknown as BrowserFn;
+      .mockResolvedValueOnce(
+        JSON.stringify([{ event: "click" }]),
+      ) as unknown as BrowserFn;
     const poll = createDataLayerPoller(acc, pollBrowserFn);
     const navigate = poll(createNavigateTool(mockBrowser("ok")));
     const click = poll(createClickTool(mockBrowser("ok")));
     await navigate.execute("1", { url: "https://example.com" });
     await click.execute("1", { selector: "@e1" });
     // Second poll should use slice(1)
-    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toContain("slice(1)");
+    expect(vi.mocked(pollBrowserFn).mock.calls[1][0]).toEqual([
+      "eval",
+      "JSON.stringify((window.dataLayer || []).slice(1))",
+    ]);
     expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
   });
 });

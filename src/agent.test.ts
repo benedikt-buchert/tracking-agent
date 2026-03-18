@@ -1,6 +1,18 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type * as Fs from "fs";
-import { parseArgs, resolveArgs, buildInitialPrompt, createSystemPrompt, createAgent, createConsoleHandler, resolveModel, checkApiKey, buildAgentTools, collectAgentText } from "./agent.js";
+import {
+  parseArgs,
+  resolveArgs,
+  buildInitialPrompt,
+  createSystemPrompt,
+  createAgent,
+  createConsoleHandler,
+  resolveModel,
+  checkApiKey,
+  buildAgentTools,
+  collectAgentText,
+  ConfigurationError,
+} from "./agent.js";
 import { allTools } from "./tools.js";
 
 import type { EventSchema } from "./schema.js";
@@ -11,8 +23,10 @@ import type { AssistantMessage } from "@mariozechner/pi-ai";
 describe("parseArgs", () => {
   it("parses --schema and --url flags", () => {
     const result = parseArgs([
-      "--schema", "https://example.com/schema.json",
-      "--url", "https://mysite.com",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
     ]);
     expect(result.schemaUrl).toBe("https://example.com/schema.json");
     expect(result.targetUrl).toBe("https://mysite.com");
@@ -21,8 +35,10 @@ describe("parseArgs", () => {
 
   it("accepts flags in any order", () => {
     const result = parseArgs([
-      "--url", "https://mysite.com",
-      "--schema", "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--schema",
+      "https://example.com/schema.json",
     ]);
     expect(result.schemaUrl).toBe("https://example.com/schema.json");
     expect(result.targetUrl).toBe("https://mysite.com");
@@ -50,22 +66,44 @@ describe("parseArgs", () => {
   });
 
   it("sets resume:true when --resume flag is present", () => {
-    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com", "--resume"]);
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/s.json",
+      "--url",
+      "https://x.com",
+      "--resume",
+    ]);
     expect(result.resume).toBe(true);
   });
 
   it("sets resume:false when --resume flag is absent", () => {
-    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com"]);
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/s.json",
+      "--url",
+      "https://x.com",
+    ]);
     expect(result.resume).toBe(false);
   });
 
   it("sets replay:true when --replay flag is present", () => {
-    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com", "--replay"]);
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/s.json",
+      "--url",
+      "https://x.com",
+      "--replay",
+    ]);
     expect(result.replay).toBe(true);
   });
 
   it("sets replay:false when --replay flag is absent", () => {
-    const result = parseArgs(["--schema", "https://example.com/s.json", "--url", "https://x.com"]);
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/s.json",
+      "--url",
+      "https://x.com",
+    ]);
     expect(result.replay).toBe(false);
   });
 });
@@ -79,16 +117,26 @@ describe("resolveArgs", () => {
 
   it("returns parsed args when both flags are provided", async () => {
     const result = await resolveArgs([
-      "--schema", "https://example.com/schema.json",
-      "--url", "https://mysite.com",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
     ]);
-    expect(result).toEqual({ schemaUrl: "https://example.com/schema.json", targetUrl: "https://mysite.com", resume: false, replay: false, headless: false });
+    expect(result).toEqual({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://mysite.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
   });
 
   it("includes resume:true when --resume is passed", async () => {
     const result = await resolveArgs([
-      "--schema", "https://example.com/schema.json",
-      "--url", "https://mysite.com",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
       "--resume",
     ]);
     expect(result?.resume).toBe(true);
@@ -96,7 +144,10 @@ describe("resolveArgs", () => {
 
   it("prompts for missing --schema", async () => {
     const prompted: string[] = [];
-    const prompt = async (q: string) => { prompted.push(q); return "https://prompted-schema.json"; };
+    const prompt = async (q: string) => {
+      prompted.push(q);
+      return "https://prompted-schema.json";
+    };
     const result = await resolveArgs(["--url", "https://mysite.com"], prompt);
     expect(result?.schemaUrl).toBe("https://prompted-schema.json");
     expect(prompted).toHaveLength(1);
@@ -104,8 +155,14 @@ describe("resolveArgs", () => {
 
   it("prompts for missing --url", async () => {
     const prompted: string[] = [];
-    const prompt = async (q: string) => { prompted.push(q); return "https://prompted-url.com"; };
-    const result = await resolveArgs(["--schema", "https://example.com/schema.json"], prompt);
+    const prompt = async (q: string) => {
+      prompted.push(q);
+      return "https://prompted-url.com";
+    };
+    const result = await resolveArgs(
+      ["--schema", "https://example.com/schema.json"],
+      prompt,
+    );
     expect(result?.targetUrl).toBe("https://prompted-url.com");
     expect(prompted).toHaveLength(1);
   });
@@ -114,13 +171,21 @@ describe("resolveArgs", () => {
     const answers = ["https://schema.json", "https://site.com"];
     const prompt = async () => answers.shift()!;
     const result = await resolveArgs([], prompt);
-    expect(result).toEqual({ schemaUrl: "https://schema.json", targetUrl: "https://site.com", resume: false, replay: false, headless: false });
+    expect(result).toEqual({
+      schemaUrl: "https://schema.json",
+      targetUrl: "https://site.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
   });
 
   it("includes replay:true when --replay is passed", async () => {
     const result = await resolveArgs([
-      "--schema", "https://example.com/schema.json",
-      "--url", "https://mysite.com",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
       "--replay",
     ]);
     expect(result?.replay).toBe(true);
@@ -161,8 +226,14 @@ describe("buildInitialPrompt", () => {
   const schemaUrl = "https://example.com/schema.json";
   const targetUrl = "https://mysite.com";
   const eventSchemas: EventSchema[] = [
-    { eventName: "purchase", schemaUrl: "https://example.com/schemas/web/purchase.json" },
-    { eventName: "add_to_cart", schemaUrl: "https://example.com/schemas/web/add-to-cart.json" },
+    {
+      eventName: "purchase",
+      schemaUrl: "https://example.com/schemas/web/purchase.json",
+    },
+    {
+      eventName: "add_to_cart",
+      schemaUrl: "https://example.com/schemas/web/add-to-cart.json",
+    },
   ];
 
   it("includes the target URL", () => {
@@ -184,13 +255,17 @@ describe("buildInitialPrompt", () => {
   it("embeds each sub-schema URL in the prompt", () => {
     const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
     expect(prompt).toContain("https://example.com/schemas/web/purchase.json");
-    expect(prompt).toContain("https://example.com/schemas/web/add-to-cart.json");
+    expect(prompt).toContain(
+      "https://example.com/schemas/web/add-to-cart.json",
+    );
   });
 
   it("does NOT instruct the agent to fetch or discover schemas", () => {
     const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
     // Schema discovery is done in code — the agent should not be asked to do it
-    expect(prompt.toLowerCase()).not.toMatch(/fetch.*schema|discover.*schema|\$ref/);
+    expect(prompt.toLowerCase()).not.toMatch(
+      /fetch.*schema|discover.*schema|\$ref/,
+    );
   });
 
   it("includes the description when present so the agent knows where the event fires", () => {
@@ -207,7 +282,10 @@ describe("buildInitialPrompt", () => {
 
   it("omits the description marker when description is absent", () => {
     const schemas: EventSchema[] = [
-      { eventName: "purchase", schemaUrl: "https://example.com/schemas/web/purchase.json" },
+      {
+        eventName: "purchase",
+        schemaUrl: "https://example.com/schemas/web/purchase.json",
+      },
     ];
     const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
     expect(prompt).not.toContain(" — undefined");
@@ -242,41 +320,60 @@ describe("createSystemPrompt", () => {
 describe("checkApiKey", () => {
   const env = process.env;
 
+  function getConfigurationError(fn: () => void): ConfigurationError {
+    try {
+      fn();
+    } catch (error) {
+      return error as ConfigurationError;
+    }
+    throw new Error("Expected ConfigurationError to be thrown");
+  }
+
+  beforeEach(() => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
   afterEach(() => {
     process.env = { ...env };
     vi.restoreAllMocks();
   });
 
-  it("does not exit when ANTHROPIC_API_KEY is set for anthropic provider", () => {
-    process.env = { ...env, MODEL_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-test" };
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+  it("does not throw when ANTHROPIC_API_KEY is set for anthropic provider", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "sk-test",
+    };
     expect(() => checkApiKey()).not.toThrow();
-    expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("exits when ANTHROPIC_API_KEY is missing for anthropic provider", () => {
+  it("throws ConfigurationError when ANTHROPIC_API_KEY is missing for anthropic provider", () => {
     process.env = { ...env, MODEL_PROVIDER: "anthropic" };
     delete process.env["ANTHROPIC_API_KEY"];
     delete process.env["ANTHROPIC_OAUTH_TOKEN"];
-    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
-    expect(() => checkApiKey()).toThrow("exit");
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/ANTHROPIC_API_KEY/);
   });
 
-  it("does not exit when OPENAI_API_KEY is set for openai provider", () => {
-    process.env = { ...env, MODEL_PROVIDER: "openai", OPENAI_API_KEY: "sk-test" };
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+  it("does not throw when OPENAI_API_KEY is set for openai provider", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "openai",
+      OPENAI_API_KEY: "sk-test",
+    };
     expect(() => checkApiKey()).not.toThrow();
-    expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("exits when OPENAI_API_KEY is missing for openai provider", () => {
+  it("throws ConfigurationError when OPENAI_API_KEY is missing for openai provider", () => {
     process.env = { ...env, MODEL_PROVIDER: "openai" };
     delete process.env["OPENAI_API_KEY"];
-    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
-    expect(() => checkApiKey()).toThrow("exit");
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/OPENAI_API_KEY/);
   });
 
-  it("does not exit for google-vertex when GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and ADC credentials are present", () => {
+  it("does not throw for google-vertex when GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and ADC credentials are present", () => {
     const adcPath = `${process.env["HOME"]}/.config/gcloud/application_default_credentials.json`;
     process.env = {
       ...env,
@@ -286,36 +383,43 @@ describe("checkApiKey", () => {
     };
     // Mock ADC file existence
     const fs = require("fs") as typeof Fs;
-    vi.spyOn(fs, "existsSync").mockImplementation((p: unknown) => p === adcPath || fs.existsSync(p as string));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    vi.spyOn(fs, "existsSync").mockImplementation(
+      (p: unknown) => p === adcPath || fs.existsSync(p as string),
+    );
     expect(() => checkApiKey()).not.toThrow();
-    expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("exits for google-vertex when GOOGLE_CLOUD_PROJECT is missing", () => {
-    process.env = { ...env, MODEL_PROVIDER: "google-vertex", GOOGLE_CLOUD_LOCATION: "us-central1" };
+  it("throws ConfigurationError for google-vertex when GOOGLE_CLOUD_PROJECT is missing", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+    };
     delete process.env["GOOGLE_CLOUD_PROJECT"];
     delete process.env["GCLOUD_PROJECT"];
-    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
-    expect(() => checkApiKey()).toThrow("exit");
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/GOOGLE_CLOUD_PROJECT/);
   });
 
-  it("exits for google-vertex when GOOGLE_CLOUD_LOCATION is missing", () => {
-    process.env = { ...env, MODEL_PROVIDER: "google-vertex", GOOGLE_CLOUD_PROJECT: "my-project" };
+  it("throws ConfigurationError for google-vertex when GOOGLE_CLOUD_LOCATION is missing", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_PROJECT: "my-project",
+    };
     delete process.env["GOOGLE_CLOUD_LOCATION"];
-    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
-    expect(() => checkApiKey()).toThrow("exit");
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/GOOGLE_CLOUD_LOCATION/);
   });
 
-  it("includes gcloud setup hint in the error message for google-vertex", () => {
+  it("includes gcloud setup hint in the thrown error message for google-vertex", () => {
     process.env = { ...env, MODEL_PROVIDER: "google-vertex" };
     delete process.env["GOOGLE_CLOUD_PROJECT"];
     delete process.env["GOOGLE_CLOUD_LOCATION"];
-    const stderrMessages: string[] = [];
-    vi.spyOn(process.stderr, "write").mockImplementation((s) => { stderrMessages.push(String(s)); return true; });
-    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
-    expect(() => checkApiKey()).toThrow("exit");
-    expect(stderrMessages.join("")).toMatch(/gcloud/i);
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(/gcloud/i);
   });
 });
 
@@ -401,7 +505,14 @@ const stubMsg: AssistantMessage = {
   role: "assistant",
   content: [],
   stopReason: "stop" as const,
-  usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
   timestamp: 0,
   api: "anthropic" as never,
   provider: "anthropic",
@@ -411,8 +522,17 @@ const stubMsg: AssistantMessage = {
 function makeTextDelta(delta: string): AgentEvent {
   return {
     type: "message_update",
-    message: { role: "user", content: [{ type: "text", text: "" }], timestamp: 0 },
-    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial: stubMsg },
+    message: {
+      role: "user",
+      content: [{ type: "text", text: "" }],
+      timestamp: 0,
+    },
+    assistantMessageEvent: {
+      type: "text_delta",
+      contentIndex: 0,
+      delta,
+      partial: stubMsg,
+    },
   };
 }
 
@@ -461,21 +581,36 @@ describe("createConsoleHandler", () => {
   it("shows the URL arg for browser_navigate", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
-    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "browser_navigate", args: { url: "https://example.com/shop" } });
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_navigate",
+      args: { url: "https://example.com/shop" },
+    });
     expect(err.join("")).toContain("https://example.com/shop");
   });
 
   it("shows selector info for browser_click", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
-    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "browser_click", args: { selector: "#add-to-cart" } });
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_click",
+      args: { selector: "#add-to-cart" },
+    });
     expect(err.join("")).toContain("#add-to-cart");
   });
 
   it("shows from_index for get_datalayer", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
-    handler({ type: "tool_execution_start", toolCallId: "t1", toolName: "get_datalayer", args: { from_index: 3 } });
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "get_datalayer",
+      args: { from_index: 3 },
+    });
     expect(err.join("")).toContain("3");
   });
 
@@ -489,7 +624,10 @@ describe("createConsoleHandler", () => {
   it("ignores unrelated event types silently", () => {
     const out: string[] = [];
     const err: string[] = [];
-    const handler = createConsoleHandler((s) => out.push(s), (s) => err.push(s));
+    const handler = createConsoleHandler(
+      (s) => out.push(s),
+      (s) => err.push(s),
+    );
     handler({ type: "agent_start" });
     handler({ type: "turn_start" });
     expect(out).toHaveLength(0);
@@ -506,7 +644,11 @@ describe("createConsoleHandler", () => {
   it("includes a hint to check billing on credit error", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
-    handler(makeTurnEndError("400 Your credit balance is too low to access the Anthropic API"));
+    handler(
+      makeTurnEndError(
+        "400 Your credit balance is too low to access the Anthropic API",
+      ),
+    );
     expect(err.join("").toLowerCase()).toMatch(/billing|credit|plans/);
   });
 
@@ -535,14 +677,18 @@ describe("buildAgentTools", () => {
   it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {
     const { tools } = buildAgentTools([], true);
     const hitTool = tools.find((t) => t.name === "request_human_input")!;
-    await expect(hitTool.execute("1", { message: "do something" })).resolves.toBeDefined();
+    await expect(
+      hitTool.execute("1", { message: "do something" }),
+    ).resolves.toBeDefined();
   });
 
   it("in headed mode, request_human_input is the original tool (waits for readline)", () => {
     const { tools: headedTools } = buildAgentTools([], false);
     const { tools: headlessTools } = buildAgentTools([], true);
     const headed = headedTools.find((t) => t.name === "request_human_input")!;
-    const headless = headlessTools.find((t) => t.name === "request_human_input")!;
+    const headless = headlessTools.find(
+      (t) => t.name === "request_human_input",
+    )!;
     expect(headed).not.toBe(headless);
   });
 });
@@ -558,8 +704,26 @@ describe("collectAgentText", () => {
       return undefined as never;
     });
     vi.spyOn(agent, "prompt").mockImplementation(async () => {
-      captured?.({ type: "message_update", message: {} as never, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello", partial: {} as never } });
-      captured?.({ type: "message_update", message: {} as never, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world", partial: {} as never } });
+      captured?.({
+        type: "message_update",
+        message: {} as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Hello",
+          partial: {} as never,
+        },
+      });
+      captured?.({
+        type: "message_update",
+        message: {} as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: " world",
+          partial: {} as never,
+        },
+      });
       return {} as never;
     });
     expect(await collectAgentText(agent, "any prompt")).toBe("Hello world");
