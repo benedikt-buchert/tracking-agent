@@ -16,10 +16,10 @@ describe("resolveRef", () => {
   it("resolves a relative ref against the base URL", () => {
     const result = resolveRef(
       "./web/purchase-event.json",
-      "https://example.com/schemas/1.3.0/event-reference.json"
+      "https://example.com/schemas/1.3.0/event-reference.json",
     );
     expect(result).toBe(
-      "https://example.com/schemas/1.3.0/web/purchase-event.json"
+      "https://example.com/schemas/1.3.0/web/purchase-event.json",
     );
   });
 
@@ -35,10 +35,7 @@ describe("resolveRef", () => {
 describe("extractRefs", () => {
   it("collects $ref strings from oneOf", () => {
     const schema = {
-      oneOf: [
-        { $ref: "./purchase.json" },
-        { $ref: "./add-to-cart.json" },
-      ],
+      oneOf: [{ $ref: "./purchase.json" }, { $ref: "./add-to-cart.json" }],
     };
     expect(extractRefs(schema)).toEqual([
       "./purchase.json",
@@ -122,7 +119,9 @@ describe("extractEventName", () => {
 
 describe("extractDescription", () => {
   it("returns the top-level description string", () => {
-    expect(extractDescription({ description: "Fires on purchase." })).toBe("Fires on purchase.");
+    expect(extractDescription({ description: "Fires on purchase." })).toBe(
+      "Fires on purchase.",
+    );
   });
 
   it("returns undefined when description is absent", () => {
@@ -135,6 +134,7 @@ describe("extractDescription", () => {
 
   it("returns undefined for non-object input", () => {
     expect(extractDescription(null)).toBeUndefined();
+    expect(extractDescription(undefined)).toBeUndefined();
     expect(extractDescription("string")).toBeUndefined();
   });
 });
@@ -164,7 +164,7 @@ describe("fetchJson", () => {
     } as Response);
 
     await expect(fetchJson("https://example.com/missing.json")).rejects.toThrow(
-      "HTTP 404"
+      "HTTP 404",
     );
   });
 });
@@ -173,8 +173,23 @@ describe("fetchJson", () => {
 
 describe("extractTrackingTargets", () => {
   it("returns the x-tracking-targets array when present", () => {
-    const schema = { "x-tracking-targets": ["web-datalayer-js", "server-side"] };
-    expect(extractTrackingTargets(schema)).toEqual(["web-datalayer-js", "server-side"]);
+    const schema = {
+      "x-tracking-targets": ["web-datalayer-js", "server-side"],
+    };
+    expect(extractTrackingTargets(schema)).toEqual([
+      "web-datalayer-js",
+      "server-side",
+    ]);
+  });
+
+  it("filters out non-string tracking targets", () => {
+    const schema = {
+      "x-tracking-targets": ["web-datalayer-js", 42, null, "server-side"],
+    };
+    expect(extractTrackingTargets(schema)).toEqual([
+      "web-datalayer-js",
+      "server-side",
+    ]);
   });
 
   it("returns an empty array when x-tracking-targets is absent", () => {
@@ -187,7 +202,9 @@ describe("extractTrackingTargets", () => {
   });
 
   it("returns an empty array when x-tracking-targets is not an array", () => {
-    expect(extractTrackingTargets({ "x-tracking-targets": "web-datalayer-js" })).toEqual([]);
+    expect(
+      extractTrackingTargets({ "x-tracking-targets": "web-datalayer-js" }),
+    ).toEqual([]);
   });
 });
 
@@ -197,10 +214,15 @@ describe("extractCanonicalUrl", () => {
   it("returns the $schema const URL from properties", () => {
     const schema = {
       properties: {
-        $schema: { type: "string", const: "https://example.com/schemas/purchase.json" },
+        $schema: {
+          type: "string",
+          const: "https://example.com/schemas/purchase.json",
+        },
       },
     };
-    expect(extractCanonicalUrl(schema)).toBe("https://example.com/schemas/purchase.json");
+    expect(extractCanonicalUrl(schema)).toBe(
+      "https://example.com/schemas/purchase.json",
+    );
   });
 
   it("returns undefined when properties.$schema has no const", () => {
@@ -215,17 +237,28 @@ describe("extractCanonicalUrl", () => {
     expect(extractCanonicalUrl(schema)).toBeUndefined();
   });
 
+  it("returns undefined when properties is null", () => {
+    const schema = { properties: null };
+    expect(extractCanonicalUrl(schema)).toBeUndefined();
+  });
+
   it("returns undefined when properties is absent", () => {
     expect(extractCanonicalUrl({ title: "No props" })).toBeUndefined();
   });
 
   it("returns undefined for non-object input", () => {
     expect(extractCanonicalUrl(null)).toBeUndefined();
+    expect(extractCanonicalUrl(undefined)).toBeUndefined();
     expect(extractCanonicalUrl("string")).toBeUndefined();
   });
 
   it("returns undefined when const is not a string", () => {
     const schema = { properties: { $schema: { const: 42 } } };
+    expect(extractCanonicalUrl(schema)).toBeUndefined();
+  });
+
+  it("returns undefined when properties.$schema is null", () => {
+    const schema = { properties: { $schema: null } };
     expect(extractCanonicalUrl(schema)).toBeUndefined();
   });
 });
@@ -253,7 +286,8 @@ describe("discoverEventSchemas", () => {
       properties: { event: { const: "add_to_cart" } },
     };
 
-    const fetchSpy = vi.spyOn(global, "fetch")
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
       .mockResolvedValueOnce({
         ok: true,
         json: async () => entrySchema,
@@ -308,10 +342,22 @@ describe("discoverEventSchemas", () => {
     };
 
     vi.spyOn(global, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => entrySchema } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => purchaseSchema } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => serverSchema } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => noTargetSchema } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => entrySchema,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => purchaseSchema,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => serverSchema,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => noTargetSchema,
+      } as Response);
 
     const result = await discoverEventSchemas(entryUrl, "web-datalayer-js");
 
@@ -321,7 +367,9 @@ describe("discoverEventSchemas", () => {
 
   it("includes all sub-schemas when no trackingTarget is specified", async () => {
     const entryUrl = "https://example.com/schemas/entry.json";
-    const entrySchema = { oneOf: [{ $ref: "./web/purchase.json" }, { $ref: "./web/server.json" }] };
+    const entrySchema = {
+      oneOf: [{ $ref: "./web/purchase.json" }, { $ref: "./web/server.json" }],
+    };
     const purchaseSchema = {
       "x-tracking-targets": ["web-datalayer-js"],
       properties: { event: { const: "purchase" } },
@@ -332,9 +380,18 @@ describe("discoverEventSchemas", () => {
     };
 
     vi.spyOn(global, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => entrySchema } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => purchaseSchema } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => serverSchema } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => entrySchema,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => purchaseSchema,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => serverSchema,
+      } as Response);
 
     const result = await discoverEventSchemas(entryUrl);
     expect(result).toHaveLength(2);
@@ -343,10 +400,7 @@ describe("discoverEventSchemas", () => {
   it("skips sub-schemas where no event name can be extracted", async () => {
     const entryUrl = "https://example.com/schemas/entry.json";
     const entrySchema = {
-      oneOf: [
-        { $ref: "./web/purchase.json" },
-        { $ref: "./web/unknown.json" },
-      ],
+      oneOf: [{ $ref: "./web/purchase.json" }, { $ref: "./web/unknown.json" }],
     };
     const purchaseSchema = {
       properties: { event: { const: "purchase" } },

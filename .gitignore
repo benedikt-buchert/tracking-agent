@@ -1,7 +1,11 @@
 node_modules/
 dist/
 .env
+coverage/
+reports/
 tracking-reports/
 .tracking-agent-playbook.json
 .tracking-agent-session.json
+.stryker-tmp/
 .DS_Store
+.cache/
