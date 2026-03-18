@@ -13,7 +13,9 @@ describe("project verification config", () => {
     };
 
     expect(pkg.scripts?.["prepare"]).toBe("husky");
-    expect(pkg.scripts?.["verify"]).toBe("npm run lint && npm run test && npm run build");
+    expect(pkg.scripts?.["verify"]).toBe(
+      "npm run lint && npm run test && npm run typecheck",
+    );
   });
 
   it("defines a husky pre-commit hook that runs the verification command", () => {
