@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type * as Fs from "fs";
 import {
   parseArgs,
   resolveArgs,
@@ -374,18 +373,13 @@ describe("checkApiKey", () => {
   });
 
   it("does not throw for google-vertex when GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and ADC credentials are present", () => {
-    const adcPath = `${process.env["HOME"]}/.config/gcloud/application_default_credentials.json`;
     process.env = {
       ...env,
       MODEL_PROVIDER: "google-vertex",
       GOOGLE_CLOUD_PROJECT: "benedikt-testproject",
       GOOGLE_CLOUD_LOCATION: "us-central1",
+      GOOGLE_CLOUD_API_KEY: "vertex-test-key",
     };
-    // Mock ADC file existence
-    const fs = require("fs") as typeof Fs;
-    vi.spyOn(fs, "existsSync").mockImplementation(
-      (p: unknown) => p === adcPath || fs.existsSync(p as string),
-    );
     expect(() => checkApiKey()).not.toThrow();
   });
 
