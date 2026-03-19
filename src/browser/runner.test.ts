@@ -15,6 +15,7 @@ import {
   navigateTo,
   captureDataLayer,
   drainInterceptor,
+  clearSeenPageBoundaryWarnings,
   waitForNavigation,
   mergeUniqueEvents,
   startHeadedBrowser,
@@ -1205,6 +1206,11 @@ describe("extractPlaybookSteps", () => {
 // ─── drainInterceptor ─────────────────────────────────────────────────────────
 
 describe("drainInterceptor", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearSeenPageBoundaryWarnings();
+  });
+
   it("recovers persisted page-boundary events and warns with event names", async () => {
     const browserFn = vi.fn().mockResolvedValue(
       JSON.stringify({
@@ -1288,6 +1294,39 @@ describe("drainInterceptor", () => {
     expect(call).toEqual(["eval", expect.stringContaining("__dl_intercepted")]);
     expect(call[1]).toContain("__dl_buffer");
     expect(call[1]).toContain("sessionStorage");
+  });
+
+  it("does not warn for on-page events that were never across a navigation boundary", async () => {
+    // Simulate a same-page drain: interceptor already installed (recoveredCount=0)
+    // even though there are real events. The warning must NOT fire.
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify({ events: [{ event: "add_to_cart" }], recoveredCount: 0 }),
+      ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const result = await drainInterceptor(browserFn);
+
+    expect(result).toEqual([{ event: "add_to_cart" }]);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it("JS uses isFreshInstall to separate boundary recovery from same-page drains", async () => {
+    const browserFn = vi.fn().mockResolvedValue("[]") as unknown as BrowserFn;
+    await drainInterceptor(browserFn);
+    const js = vi.mocked(browserFn).mock.calls[0][0][1] as string;
+    // The JS must capture whether this is a fresh install before the install guard
+    expect(js).toMatch(/isFreshInstall\s*=\s*!window\.__dl_intercepted/);
+    // sessionStorage drain with recoveredCount must be guarded by isFreshInstall
+    const freshInstallIdx = js.indexOf("isFreshInstall");
+    const recoveredCountIdx = js.indexOf("recoveredCount");
+    expect(freshInstallIdx).toBeGreaterThanOrEqual(0);
+    expect(recoveredCountIdx).toBeGreaterThanOrEqual(0);
+    // The interceptor's push should also push into __dl_buffer for same-page drains
+    expect(js).toMatch(/__dl_buffer\.push/);
   });
 });
 

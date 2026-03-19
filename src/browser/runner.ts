@@ -8,6 +8,10 @@ export const VALIDATOR_BASE_URL =
 export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
 const seenPageBoundaryWarnings = new Set<string>();
 
+export function clearSeenPageBoundaryWarnings(): void {
+  seenPageBoundaryWarnings.clear();
+}
+
 export type BrowserFn = (args: string[]) => Promise<string>;
 
 type ExecFileCallback = (
@@ -525,6 +529,7 @@ export async function drainInterceptor(
   const js = [
     "(function() {",
     `  var storageKey = ${JSON.stringify(DATA_LAYER_BRIDGE_STORAGE_KEY)};`,
+    "  var isFreshInstall = !window.__dl_intercepted;",
     "  if (!window.__dl_intercepted) {",
     "    window.__dl_buffer = [];",
     "    var dl = window.dataLayer;",
@@ -533,6 +538,7 @@ export async function drainInterceptor(
     "    var orig = dl.push;",
     "    dl.push = function() {",
     "      for (var j = 0; j < arguments.length; j++) {",
+    "        window.__dl_buffer.push(arguments[j]);",
     "        try {",
     "          var persisted = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
     "          persisted.push(arguments[j]);",
@@ -544,12 +550,18 @@ export async function drainInterceptor(
     "    window.__dl_intercepted = true;",
     "  }",
     "  var events = window.__dl_buffer.splice(0);",
-    "  try {",
-    "    var persistedEvents = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
-    "    sessionStorage.removeItem(storageKey);",
-    "    for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); }",
-    "  } catch (e) {}",
-    "  return JSON.stringify({ events: events, recoveredCount: persistedEvents ? persistedEvents.length : 0 });",
+    "  var recoveredCount = 0;",
+    "  if (isFreshInstall) {",
+    "    try {",
+    "      var persistedEvents = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+    "      sessionStorage.removeItem(storageKey);",
+    "      for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); }",
+    "      recoveredCount = persistedEvents ? persistedEvents.length : 0;",
+    "    } catch (e) {}",
+    "  } else {",
+    "    try { sessionStorage.removeItem(storageKey); } catch (e) {}",
+    "  }",
+    "  return JSON.stringify({ events: events, recoveredCount: recoveredCount });",
     "})()",
   ].join(" ");
   const out = await runBrowserEval(js, browser).catch(() => "");
