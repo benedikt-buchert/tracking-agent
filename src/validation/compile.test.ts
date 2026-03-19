@@ -77,6 +77,33 @@ describe("compileValidator", () => {
     expect(validate({ name: "Alice" })).toEqual({ valid: true, errors: [] });
     expect(validate({})).toMatchObject({ valid: false });
   });
+
+  it("selects Ajv2019 for draft 2019-09 schemas", async () => {
+    const schema = {
+      $schema: "https://json-schema.org/draft/2019-09/schema",
+      type: "object",
+      required: ["value"],
+      properties: { value: { type: "number" } },
+    };
+
+    const validate = await compileValidator(schema);
+
+    expect(validate({ value: 1 })).toEqual({ valid: true, errors: [] });
+    expect(validate({ value: "not-a-number" })).toMatchObject({ valid: false });
+  });
+
+  it("compiles a self-contained schema without a loadSchemaFn", async () => {
+    // Covers the nullish-coalescing else branch on loadSchemaFn
+    const schema = {
+      type: "object",
+      required: ["event"],
+      properties: { event: { type: "string" } },
+    };
+
+    const validate = await compileValidator(schema, undefined);
+
+    expect(validate({ event: "page_view" })).toEqual({ valid: true, errors: [] });
+  });
 });
 
 describe("formatAjvError", () => {

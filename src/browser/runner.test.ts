@@ -346,6 +346,18 @@ describe("generateReport", () => {
     expect(report).not.toContain("✔ Passing events");
     expect(report).toContain("✖ Failing events");
   });
+
+  it("uses (unnamed) for failing events without an event name", () => {
+    const unnamedFailing: EventValidationResult = {
+      index: 3,
+      event: { page: "/checkout" },
+      eventName: undefined,
+      schemaUrl: "https://example.com/schemas/web/unknown.json",
+      result: { valid: false, errors: ["Unexpected event format"] },
+    };
+    const report = generateReport([unnamedFailing], []);
+    expect(report).toContain("[3] (unnamed)");
+  });
 });
 
 // ─── countEventsByType ────────────────────────────────────────────────────────
@@ -449,6 +461,23 @@ describe("saveReportFolder", () => {
     const folderPath = await saveReportFolder(baseDir, [], [], [], "");
     expect(folderPath).toContain(baseDir);
     expect(folderPath).not.toBe(baseDir);
+  });
+
+  it("groups null and primitive events under (unnamed) in events-by-type", async () => {
+    const baseDir = join(tmpdir(), `tr-test-${randomBytes(4).toString("hex")}`);
+    // null triggers L350 false branch; { event: 42 } triggers L352 false branch
+    const events = [null, 42, { event: 42 }, { event: "purchase" }];
+    const folderPath = await saveReportFolder(baseDir, events, [], [], "");
+    const { readFile } = await import("fs/promises");
+    // "(unnamed)" is sanitized to "_unnamed_" by the filename regex
+    const unnamed = JSON.parse(
+      await readFile(join(folderPath, "events-by-type", "_unnamed_.json"), "utf8"),
+    );
+    expect(unnamed).toHaveLength(3);
+    const purchases = JSON.parse(
+      await readFile(join(folderPath, "events-by-type", "purchase.json"), "utf8"),
+    );
+    expect(purchases).toHaveLength(1);
   });
 });
 
@@ -980,6 +1009,17 @@ describe("extractPlaybookSteps", () => {
   it("returns null when the JSON array contains a null item", () => {
     expect(extractPlaybookSteps("[null]")).toBeNull();
   });
+
+  it("returns null when a fenced block contains a valid JSON non-array (e.g. an object)", () => {
+    // isValidSteps receives a non-array, hits the !Array.isArray branch → returns false
+    const text = "```json\n{\"tool\":\"nav\",\"args\":{}}\n```";
+    expect(extractPlaybookSteps(text)).toBeNull();
+  });
+
+  it("returns null when a fenced block contains a non-array primitive", () => {
+    const text = "```json\n\"a string\"\n```";
+    expect(extractPlaybookSteps(text)).toBeNull();
+  });
 });
 
 // ─── drainInterceptor ─────────────────────────────────────────────────────────
@@ -1066,6 +1106,47 @@ describe("drainInterceptor", () => {
     const browserFn = vi.fn().mockResolvedValue("") as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([]);
+  });
+
+  it("returns an empty array when browser returns a JSON primitive (number)", async () => {
+    // parseDrainedInterceptorResult: hits the neither-array-nor-object branch
+    const browserFn = vi.fn().mockResolvedValue("42") as unknown as BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("returns an empty array when browser returns a JSON boolean", async () => {
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue("true") as unknown as BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("handles object result where events field is not an array", async () => {
+    // parseInterceptorObjectResult: events branch → else []
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify({ events: "not-an-array", recoveredCount: 0 }),
+      ) as unknown as BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([]);
+  });
+
+  it("handles object result where recoveredCount field is not a number", async () => {
+    // parseInterceptorObjectResult: recoveredCount branch → else 0 (no warning)
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify({
+          events: [{ event: "purchase" }],
+          recoveredCount: "one",
+          recoveredEvents: [],
+        }),
+      ) as unknown as BrowserFn;
+    const result = await drainInterceptor(browserFn);
+    expect(result).toEqual([{ event: "purchase" }]);
   });
 
   it("passes JS containing __dl_intercepted and __dl_buffer to the browser", async () => {

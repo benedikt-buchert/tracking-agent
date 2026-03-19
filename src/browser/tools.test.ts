@@ -1078,3 +1078,94 @@ describe("createDataLayerPoller", () => {
     expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
   });
 });
+
+// ─── createDataLayerInterceptor — settle window edge cases ───────────────────
+
+describe("createDataLayerInterceptor settle window edge cases", () => {
+  it("skips settle window when settleMs is zero even for browser_click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 0,
+      settleIntervalMs: 50,
+      sleepFn,
+    });
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@btn" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for a non-find non-click tool even when args.action is 'click'", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept({
+      name: "browser_navigate",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {},
+      }),
+    });
+
+    await tool.execute("1", { action: "click" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+});
+
+// ─── createFindTool — executeTestIdDomAction parsing edge cases ───────────────
+
+describe("createFindTool executeTestIdDomAction parsing edge cases", () => {
+  it("trims whitespace from browser output before parsing", async () => {
+    const tool = createFindTool(
+      mockBrowser(`  ${JSON.stringify({ text: "✓ Done", capturedEvents: [] })}  `),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("✓ Done");
+  });
+
+  it("strips surrounding double-quotes from browser fallback output", async () => {
+    // agent-browser sometimes wraps the eval result in an extra pair of quotes
+    const tool = createFindTool(mockBrowser('"element not found"'));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    // outer quotes stripped → "element not found" becomes the text
+    expect((result.content[0] as { text: string }).text).toBe(
+      "element not found",
+    );
+  });
+
+  it("returns raw text when browser output is a non-parseable string", async () => {
+    const tool = createFindTool(mockBrowser("unexpected plain text"));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe(
+      "unexpected plain text",
+    );
+  });
+});

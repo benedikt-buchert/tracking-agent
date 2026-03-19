@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { createConsoleHandler } from "./console-handler.js";
@@ -58,6 +58,23 @@ function makeAgentEnd(): AgentEvent {
 describe("createConsoleHandler", () => {
   afterEach(() => {
     delete process.env["MODEL_PROVIDER"];
+  });
+
+  it("uses process.stdout and process.stderr when called with no arguments", () => {
+    // Covers the default-arg branches at L70 and L73
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const handler = createConsoleHandler();
+    handler(makeTextDelta("hi"));
+    handler(makeToolStart("browser_navigate"));
+    expect(stdoutSpy).toHaveBeenCalledWith("hi");
+    expect(stderrSpy).toHaveBeenCalled();
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
   });
 
   it("writes each text_delta to the out stream", () => {
@@ -333,5 +350,17 @@ describe("createConsoleHandler", () => {
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).toContain("401 Invalid API key");
+  });
+
+  it("does not write when message_update event has a non-text_delta assistant event", () => {
+    const out: string[] = [];
+    const handler = createConsoleHandler((s) => out.push(s));
+    // Deliver a message_update whose assistantMessageEvent.type is not "text_delta"
+    handler({
+      type: "message_update",
+      message: { role: "user", content: [], timestamp: 0 },
+      assistantMessageEvent: { type: "message_start", partial: stubMsg },
+    } as unknown as AgentEvent);
+    expect(out).toHaveLength(0);
   });
 });
