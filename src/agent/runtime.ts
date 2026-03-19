@@ -28,16 +28,14 @@ export class ConfigurationError extends Error {
   }
 }
 
-function hasVertexAdcCredentials(): boolean {
+export function hasVertexAdcCredentials(
+  existsSyncFn: typeof existsSync = existsSync,
+  homeDir: string = homedir(),
+): boolean {
   const gacPath = process.env["GOOGLE_APPLICATION_CREDENTIALS"];
-  if (gacPath) return existsSync(gacPath);
-  return existsSync(
-    join(
-      homedir(),
-      ".config",
-      "gcloud",
-      "application_default_credentials.json",
-    ),
+  if (gacPath) return existsSyncFn(gacPath);
+  return existsSyncFn(
+    join(homeDir, ".config", "gcloud", "application_default_credentials.json"),
   );
 }
 

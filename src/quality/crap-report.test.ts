@@ -65,6 +65,10 @@ describe("parseArgs", () => {
   it("throws when threshold is missing its value", () => {
     expect(() => parseArgs(["--threshold"])).toThrow(/Missing value/);
   });
+
+  it("ignores unrelated arguments", () => {
+    expect(parseArgs(["--unknown", "value"])).toEqual({});
+  });
 });
 
 describe("getStagedFiles", () => {
@@ -105,9 +109,8 @@ describe("runCrapReport", () => {
     });
 
     expect(write).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "file\tfunction\tline\tcomplexity\tcoverage\tcrap",
-      ),
+      "file\tfunction\tline\tcomplexity\tcoverage\tcrap\n" +
+        "src/sample.ts\tsample\t1\t1\t100\t1\n",
     );
   });
 
@@ -139,6 +142,95 @@ describe("runCrapReport", () => {
         statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
         write: vi.fn(),
       }),
-    ).toThrow(/CRAP threshold 0 exceeded/);
+    ).toThrow(/CRAP threshold 0 exceeded: src\/sample\.ts:1 sample=1/);
+  });
+
+  it("filters reports to staged files before printing", () => {
+    const coverage = JSON.stringify({
+      "src/a.ts": {
+        path: "src/a.ts",
+        statementMap: {
+          "0": {
+            start: { line: 1, column: 0 },
+            end: { line: 1, column: 10 },
+          },
+        },
+        s: { "0": 1 },
+      },
+      "src/b.ts": {
+        path: "src/b.ts",
+        statementMap: {
+          "0": {
+            start: { line: 1, column: 0 },
+            end: { line: 1, column: 20 },
+          },
+        },
+        s: { "0": 1 },
+      },
+    });
+    const write = vi.fn();
+
+    runCrapReport(["--staged"], {
+      execFileSyncFn: vi.fn(() => "src/b.ts\n") as never,
+      readFileSyncFn: vi.fn((path: string) => {
+        if (path.endsWith("coverage-final.json")) return coverage;
+        if (path.endsWith("a.ts")) return "export function a() { return 1; }";
+        return "export function b(value: boolean) { return value ? 1 : 0; }";
+      }) as never,
+      readdirSyncFn: vi.fn(() => ["a.ts", "b.ts"]) as never,
+      statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+      write,
+    });
+
+    expect(write).toHaveBeenCalledWith(
+      "file\tfunction\tline\tcomplexity\tcoverage\tcrap\n" +
+        "src/b.ts\tb\t1\t2\t100\t2\n",
+    );
+  });
+
+  it("sorts higher-CRAP reports first", () => {
+    const coverage = JSON.stringify({
+      "src/a.ts": {
+        path: "src/a.ts",
+        statementMap: {
+          "0": {
+            start: { line: 1, column: 0 },
+            end: { line: 1, column: 20 },
+          },
+        },
+        s: { "0": 1 },
+      },
+      "src/b.ts": {
+        path: "src/b.ts",
+        statementMap: {
+          "0": {
+            start: { line: 1, column: 0 },
+            end: { line: 1, column: 10 },
+          },
+        },
+        s: { "0": 1 },
+      },
+    });
+    const write = vi.fn();
+
+    runCrapReport([], {
+      execFileSyncFn: vi.fn(() => "") as never,
+      readFileSyncFn: vi.fn((path: string) => {
+        if (path.endsWith("coverage-final.json")) return coverage;
+        if (path.endsWith("a.ts")) {
+          return "export function a(value: boolean) { return value ? 1 : 0; }";
+        }
+        return "export function b() { return 1; }";
+      }) as never,
+      readdirSyncFn: vi.fn(() => ["b.ts", "a.ts"]) as never,
+      statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+      write,
+    });
+
+    expect(write).toHaveBeenCalledWith(
+      "file\tfunction\tline\tcomplexity\tcoverage\tcrap\n" +
+        "src/a.ts\ta\t1\t2\t100\t2\n" +
+        "src/b.ts\tb\t1\t1\t100\t1\n",
+    );
   });
 });

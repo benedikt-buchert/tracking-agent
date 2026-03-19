@@ -173,6 +173,9 @@ describe("agent workflows", () => {
     expect(mocks.replayPlaybook).toHaveBeenCalledTimes(1);
     expect(mocks.agentPrompt).not.toHaveBeenCalled();
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
+    expect(
+      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
+    ).toContain("skipping agent");
   });
 
   it("falls back to the agent in replay mode and saves the optimized playbook", async () => {
@@ -206,6 +209,9 @@ describe("agent workflows", () => {
     );
 
     expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toContain(
+      "Replay got stuck at step 0",
+    );
     expect(mocks.extractPlaybookSteps).toHaveBeenCalledWith(
       "optimized rewrite",
     );
@@ -220,6 +226,9 @@ describe("agent workflows", () => {
     expect(
       stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
     ).toContain("Falling back to agent");
+    expect(
+      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
+    ).toContain("optimized");
   });
 
   it("does not save a playbook when replay recovery records no new steps", async () => {
@@ -317,6 +326,7 @@ describe("agent workflows", () => {
 
     expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
     expect(mocks.saveSession).toHaveBeenCalled();
+    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toBe("INITIAL PROMPT");
     expect(mocks.savePlaybook).toHaveBeenCalledWith(
       ".tracking-agent-playbook.json",
       {
@@ -325,6 +335,9 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
+    expect(
+      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
+    ).toContain("optimized");
   });
 
   it("does not save a playbook for fresh runs when no action steps were recorded", async () => {
@@ -407,5 +420,8 @@ describe("agent workflows", () => {
 
     expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
+    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toContain(
+      "Continue exploring",
+    );
   });
 });

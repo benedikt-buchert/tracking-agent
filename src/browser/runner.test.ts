@@ -350,7 +350,8 @@ describe("generateReport", () => {
       [passing, failing],
       ["purchase", "add_to_cart"],
     );
-    expect(report).toMatch(/2/);
+    expect(report).toContain("  Total events captured: 2");
+    expect(report).toContain("  Passed: 1  Failed: 1");
   });
 
   it("lists passing events", () => {
@@ -406,8 +407,7 @@ describe("generateReport", () => {
       [passing, failing],
       ["purchase", "add_to_cart"],
     );
-    // The existing tests still pass — no new section added without allEvents
-    expect(report).toContain("purchase");
+    expect(report).not.toContain("dataLayer pushes");
   });
 
   it("includes schema descriptions for failing and missing expected events", () => {
@@ -431,6 +431,43 @@ describe("generateReport", () => {
 
     expect(report).toContain("Schema: Cart addition");
     expect(report).toContain("page_view — Page was viewed");
+  });
+
+  it("renders the main report sections in a stable order", () => {
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart", "page_view"],
+      [{ event: "purchase" }, { event: "add_to_cart" }],
+      [
+        {
+          eventName: "add_to_cart",
+          schemaUrl: "https://example.com/schemas/web/add-to-cart.json",
+          description: "Cart addition",
+        },
+        {
+          eventName: "page_view",
+          schemaUrl: "https://example.com/schemas/web/page-view.json",
+          description: "Page was viewed",
+        },
+      ],
+    );
+
+    const countsIndex = report.indexOf("dataLayer pushes (2 total)");
+    const passingIndex = report.indexOf("✔ Passing events");
+    const failingIndex = report.indexOf("✖ Failing events");
+    const missingIndex = report.indexOf("⚠ Expected events not observed");
+
+    expect(countsIndex).toBeGreaterThan(-1);
+    expect(countsIndex).toBeLessThan(passingIndex);
+    expect(passingIndex).toBeLessThan(failingIndex);
+    expect(failingIndex).toBeLessThan(missingIndex);
+  });
+
+  it("omits empty sections when there are no passing, failing, or missing events", () => {
+    const report = generateReport([], []);
+    expect(report).not.toContain("✔ Passing events");
+    expect(report).not.toContain("✖ Failing events");
+    expect(report).not.toContain("⚠ Expected events not observed");
   });
 });
 

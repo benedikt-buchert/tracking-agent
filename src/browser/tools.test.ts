@@ -124,11 +124,10 @@ describe("createSnapshotTool", () => {
   it("returns snapshot output", async () => {
     const tool = createSnapshotTool(mockBrowser("- button @e1\n- link @e2"));
     const result = await tool.execute("1", {});
-    expect((result.content[0] as { text: string }).text).toBe(
-      "- button @e1\n- link @e2",
-    );
-    expect(result.content[0]).toMatchObject({ type: "text" });
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "- button @e1\n- link @e2" }],
+      details: {},
+    });
   });
 });
 
@@ -150,8 +149,10 @@ describe("createClickTool", () => {
   it("returns fallback when output is empty", async () => {
     const tool = createClickTool(mockBrowser(""));
     const result = await tool.execute("1", { selector: "@e3" });
-    expect((result.content[0] as { text: string }).text).toBe("Clicked");
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Clicked" }],
+      details: {},
+    });
   });
 
   it("returns browser error output as text", async () => {
@@ -181,8 +182,10 @@ describe("createFillTool", () => {
   it("returns fallback when output is empty", async () => {
     const tool = createFillTool(mockBrowser(""));
     const result = await tool.execute("1", { selector: "@e1", text: "hello" });
-    expect((result.content[0] as { text: string }).text).toBe("Filled");
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Filled" }],
+      details: {},
+    });
   });
 });
 
@@ -258,8 +261,40 @@ describe("createWaitTool", () => {
   it("returns fallback text when output is empty", async () => {
     const tool = createWaitTool(mockBrowser(""));
     const result = await tool.execute("1", { ms: 1000 });
-    expect((result.content[0] as { text: string }).text).toBe("Wait complete");
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Wait complete" }],
+      details: {},
+    });
+  });
+
+  it("prefers load over selector, target, and ms when multiple wait args exist", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", {
+      load: "networkidle",
+      selector: "#ready",
+      target: "--load domcontentloaded",
+      ms: 250,
+    });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "--load", "networkidle"]);
+  });
+
+  it("prefers selector over legacy target and ms when load is absent", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", {
+      selector: "#ready",
+      target: "#fallback",
+      ms: 250,
+    });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "#ready"]);
+  });
+
+  it("falls back to zero milliseconds when no wait target is provided", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", {});
+    expect(browserFn).toHaveBeenCalledWith(["wait", "0"]);
   });
 });
 
@@ -297,7 +332,10 @@ describe("createGetDataLayerTool", () => {
   it("returns empty array string when browser returns nothing", async () => {
     const tool = createGetDataLayerTool(mockBrowser(""));
     const result = await tool.execute("1", {});
-    expect((result.content[0] as { text: string }).text).toBe("[]");
+    expect(result).toEqual({
+      content: [{ type: "text", text: "[]" }],
+      details: {},
+    });
   });
 });
 
@@ -380,10 +418,10 @@ describe("createScreenshotTool", () => {
   it("returns fallback when output is empty", async () => {
     const tool = createScreenshotTool(mockBrowser(""));
     const result = await tool.execute("1", {});
-    expect((result.content[0] as { text: string }).text).toBe(
-      "Screenshot taken",
-    );
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Screenshot taken" }],
+      details: {},
+    });
   });
 });
 
@@ -442,8 +480,22 @@ describe("createFindTool", () => {
       value: "Checkout",
       action: "click",
     });
-    expect((result.content[0] as { text: string }).text).toBe("Done");
-    expect(result.details).toEqual({});
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Done" }],
+      details: {},
+    });
+  });
+
+  it("does not append empty fill text for fill actions", async () => {
+    const browserFn = mockBrowser("filled");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", {
+      locator: "label",
+      value: "Email",
+      action: "fill",
+      fill_text: "",
+    });
+    expect(browserFn).toHaveBeenCalledWith(["find", "label", "Email", "fill"]);
   });
 });
 
@@ -504,9 +556,15 @@ describe("requestHumanInputTool", () => {
     const result = await tool.execute("1", {
       message: "Enter payment details",
     });
-    expect((result.content[0] as { text: string }).text.toLowerCase()).toMatch(
-      /continue|done|completed/,
-    );
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "Human has completed the requested action. You may continue.",
+        },
+      ],
+      details: {},
+    });
   });
 
   it("includes the current URL when available", async () => {

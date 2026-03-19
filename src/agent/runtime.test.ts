@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFileSync, unlinkSync } from "fs";
+import type { PathLike } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -9,6 +10,7 @@ import {
   buildAgentTools,
   collectAgentText,
   ConfigurationError,
+  hasVertexAdcCredentials,
 } from "./runtime.js";
 import { allTools } from "../browser/tools.js";
 
@@ -71,6 +73,27 @@ describe("checkApiKey", () => {
     expect(error.message).toMatch(/OPENAI_API_KEY/);
   });
 
+  it("uses GEMINI_API_KEY for the google provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "google" };
+    delete process.env["GEMINI_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(/GEMINI_API_KEY/);
+  });
+
+  it("uses GROQ_API_KEY for the groq provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "groq" };
+    delete process.env["GROQ_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(/GROQ_API_KEY/);
+  });
+
+  it("uses XAI_API_KEY for the xai provider", () => {
+    process.env = { ...env, MODEL_PROVIDER: "xai" };
+    delete process.env["XAI_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(/XAI_API_KEY/);
+  });
+
   it("uses a derived API key variable name for unknown providers", () => {
     process.env = { ...env, MODEL_PROVIDER: "my-provider" };
     delete process.env["MY_PROVIDER_API_KEY"];
@@ -100,6 +123,7 @@ describe("checkApiKey", () => {
     const error = getConfigurationError(() => checkApiKey());
     expect(error).toBeInstanceOf(ConfigurationError);
     expect(error.message).toMatch(/GOOGLE_CLOUD_PROJECT/);
+    expect(error.message).toMatch(/Missing env vars: GOOGLE_CLOUD_PROJECT/);
   });
 
   it("throws ConfigurationError for google-vertex when GOOGLE_CLOUD_LOCATION is missing", () => {
@@ -112,6 +136,19 @@ describe("checkApiKey", () => {
     const error = getConfigurationError(() => checkApiKey());
     expect(error).toBeInstanceOf(ConfigurationError);
     expect(error.message).toMatch(/GOOGLE_CLOUD_LOCATION/);
+    expect(error.message).toMatch(/Missing env vars: GOOGLE_CLOUD_LOCATION/);
+  });
+
+  it("lists both required env vars when both google-vertex settings are missing", () => {
+    process.env = { ...env, MODEL_PROVIDER: "google-vertex" };
+    delete process.env["GOOGLE_CLOUD_PROJECT"];
+    delete process.env["GCLOUD_PROJECT"];
+    delete process.env["GOOGLE_CLOUD_LOCATION"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(
+      /GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION/,
+    );
+    expect(error.message).not.toMatch(/ADC credentials not found/);
   });
 
   it("accepts GCLOUD_PROJECT as a fallback project variable for google-vertex", () => {
@@ -154,6 +191,46 @@ describe("checkApiKey", () => {
     delete process.env["GOOGLE_CLOUD_LOCATION"];
     const error = getConfigurationError(() => checkApiKey());
     expect(error.message).toMatch(/gcloud/i);
+  });
+
+  it("reports missing ADC credentials when vertex env vars are present but no credentials exist", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_PROJECT: "my-project",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+    };
+    delete process.env["GOOGLE_CLOUD_API_KEY"];
+    delete process.env["GOOGLE_APPLICATION_CREDENTIALS"];
+    expect(hasVertexAdcCredentials(() => false, "/tmp/no-home")).toBe(false);
+  });
+});
+
+describe("hasVertexAdcCredentials", () => {
+  afterEach(() => {
+    delete process.env["GOOGLE_APPLICATION_CREDENTIALS"];
+  });
+
+  it("checks GOOGLE_APPLICATION_CREDENTIALS first when set", () => {
+    process.env["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/adc.json";
+    const existsSyncFn = vi.fn(
+      (path: PathLike) => String(path) === "/tmp/adc.json",
+    );
+    expect(hasVertexAdcCredentials(existsSyncFn, "/tmp/home")).toBe(true);
+    expect(existsSyncFn).toHaveBeenCalledWith("/tmp/adc.json");
+  });
+
+  it("falls back to the default gcloud ADC path when env var is absent", () => {
+    delete process.env["GOOGLE_APPLICATION_CREDENTIALS"];
+    const existsSyncFn = vi.fn(
+      (path: PathLike) =>
+        String(path) ===
+        "/tmp/home/.config/gcloud/application_default_credentials.json",
+    );
+    expect(hasVertexAdcCredentials(existsSyncFn, "/tmp/home")).toBe(true);
+    expect(existsSyncFn).toHaveBeenCalledWith(
+      "/tmp/home/.config/gcloud/application_default_credentials.json",
+    );
   });
 });
 
