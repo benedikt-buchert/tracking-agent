@@ -829,6 +829,84 @@ describe("createDataLayerInterceptor", () => {
     expect(acc).toEqual([addToCart]);
     expect(acc).toHaveLength(1);
   });
+
+  it("waits during settle window when browser_find executes with action:click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createFindTool(mockBrowser("ok")));
+
+    await tool.execute("1", { action: "click", testId: "btn" });
+
+    expect(sleepFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips settle window when browser_find executes with a non-click action", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createFindTool(mockBrowser("ok")));
+
+    await tool.execute("1", { action: "hover", testId: "btn" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window when browser_find receives non-object args", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+    });
+
+    await tool.execute("1", null);
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for tools other than browser_click and browser_find", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createNavigateTool(mockBrowser("ok")));
+
+    await tool.execute("1", { url: "https://example.com" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
 });
 
 // ─── createDataLayerPoller ────────────────────────────────────────────────────

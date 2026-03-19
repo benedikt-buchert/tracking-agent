@@ -76,6 +76,23 @@ export function parseBrowserJsonArray(text: string): unknown[] {
   }
 }
 
+function parseInterceptorObjectResult(record: Record<string, unknown>): {
+  events: unknown[];
+  recoveredCount: number;
+  recoveredEvents: unknown[];
+} {
+  return {
+    events: Array.isArray(record["events"]) ? record["events"] : [],
+    recoveredCount:
+      typeof record["recoveredCount"] === "number"
+        ? record["recoveredCount"]
+        : 0,
+    recoveredEvents: Array.isArray(record["recoveredEvents"])
+      ? record["recoveredEvents"]
+      : [],
+  };
+}
+
 function parseDrainedInterceptorResult(text: string): {
   events: unknown[];
   recoveredCount: number;
@@ -90,16 +107,7 @@ function parseDrainedInterceptorResult(text: string): {
     }
 
     if (result !== null && typeof result === "object") {
-      const record = result as Record<string, unknown>;
-      const events = Array.isArray(record["events"]) ? record["events"] : [];
-      const recoveredCount =
-        typeof record["recoveredCount"] === "number"
-          ? record["recoveredCount"]
-          : 0;
-      const recoveredEvents = Array.isArray(record["recoveredEvents"])
-        ? record["recoveredEvents"]
-        : [];
-      return { events, recoveredCount, recoveredEvents };
+      return parseInterceptorObjectResult(result as Record<string, unknown>);
     }
 
     return { events: [], recoveredCount: 0, recoveredEvents: [] };
@@ -165,19 +173,31 @@ export function resolveSchemaForEvent(
 
 // ─── formatAjvError ───────────────────────────────────────────────────────────
 
+function extractAjvErrorFields(e: Record<string, unknown>): {
+  instancePath: string;
+  keyword: string;
+  params: Record<string, unknown>;
+  message: string;
+} {
+  return {
+    instancePath:
+      typeof e["instancePath"] === "string" ? e["instancePath"] : "",
+    keyword: typeof e["keyword"] === "string" ? e["keyword"] : "",
+    params:
+      e["params"] !== null && typeof e["params"] === "object"
+        ? (e["params"] as Record<string, unknown>)
+        : {},
+    message: typeof e["message"] === "string" ? e["message"] : "",
+  };
+}
+
 export function formatAjvError(e: unknown): string {
   if (typeof e === "string") return e;
   if (e === null || typeof e !== "object") return JSON.stringify(e);
 
-  const err = e as Record<string, unknown>;
-  const instancePath =
-    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
-  const keyword = typeof err["keyword"] === "string" ? err["keyword"] : "";
-  const params =
-    err["params"] !== null && typeof err["params"] === "object"
-      ? (err["params"] as Record<string, unknown>)
-      : {};
-  const message = typeof err["message"] === "string" ? err["message"] : "";
+  const { instancePath, keyword, params, message } = extractAjvErrorFields(
+    e as Record<string, unknown>,
+  );
   const prefix = instancePath ? `${instancePath} ` : "";
   return (
     formatAjvKeywordError(keyword, params, prefix) ??

@@ -452,4 +452,77 @@ describe("agent workflows", () => {
       "Continue exploring",
     );
   });
+
+  // ─── makeStepExecutor (via replayPlaybook executor argument) ─────────────────
+
+  it("step executor calls the matching tool with replay id and returns its text", async () => {
+    const mockExecute = vi
+      .fn()
+      .mockResolvedValue({ content: [{ text: "clicked!" }] });
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: mockExecute }] as never,
+    );
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({
+      tool: "browser_click",
+      args: { selector: "#buy" },
+    });
+
+    expect(mockExecute).toHaveBeenCalledWith("replay", { selector: "#buy" });
+    expect(result).toBe("clicked!");
+  });
+
+  it("step executor returns an error message for an unknown tool", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode("https://example.com/schema.json", "https://example.com", [], [] as never);
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({ tool: "browser_unknown", args: {} });
+
+    expect(result).toBe("Error: unknown tool browser_unknown");
+  });
+
+  it("step executor returns empty string when tool result content has no text", async () => {
+    const mockExecute = vi
+      .fn()
+      .mockResolvedValue({ content: [{ type: "image" }] });
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_screenshot", execute: mockExecute }] as never,
+    );
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({
+      tool: "browser_screenshot",
+      args: {},
+    });
+
+    expect(result).toBe("");
+  });
 });
