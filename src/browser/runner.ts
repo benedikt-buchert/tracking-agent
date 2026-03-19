@@ -79,13 +79,14 @@ export function parseBrowserJsonArray(text: string): unknown[] {
 function parseDrainedInterceptorResult(text: string): {
   events: unknown[];
   recoveredCount: number;
+  recoveredEvents: unknown[];
 } {
   try {
     const parsed = JSON.parse(text || "[]");
     const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
 
     if (Array.isArray(result)) {
-      return { events: result, recoveredCount: 0 };
+      return { events: result, recoveredCount: 0, recoveredEvents: [] };
     }
 
     if (result !== null && typeof result === "object") {
@@ -95,12 +96,15 @@ function parseDrainedInterceptorResult(text: string): {
         typeof record["recoveredCount"] === "number"
           ? record["recoveredCount"]
           : 0;
-      return { events, recoveredCount };
+      const recoveredEvents = Array.isArray(record["recoveredEvents"])
+        ? record["recoveredEvents"]
+        : [];
+      return { events, recoveredCount, recoveredEvents };
     }
 
-    return { events: [], recoveredCount: 0 };
+    return { events: [], recoveredCount: 0, recoveredEvents: [] };
   } catch {
-    return { events: [], recoveredCount: 0 };
+    return { events: [], recoveredCount: 0, recoveredEvents: [] };
   }
 }
 
@@ -551,26 +555,27 @@ export async function drainInterceptor(
     "  }",
     "  var events = window.__dl_buffer.splice(0);",
     "  var recoveredCount = 0;",
+    "  var recoveredEvents = [];",
     "  if (isFreshInstall) {",
     "    try {",
     "      var persistedEvents = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
     "      sessionStorage.removeItem(storageKey);",
-    "      for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); }",
+    "      for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); recoveredEvents.push(persistedEvents[k]); }",
     "      recoveredCount = persistedEvents ? persistedEvents.length : 0;",
     "    } catch (e) {}",
     "  } else {",
     "    try { sessionStorage.removeItem(storageKey); } catch (e) {}",
     "  }",
-    "  return JSON.stringify({ events: events, recoveredCount: recoveredCount });",
+    "  return JSON.stringify({ events: events, recoveredCount: recoveredCount, recoveredEvents: recoveredEvents });",
     "})()",
   ].join(" ");
   const out = await runBrowserEval(js, browser).catch(() => "");
   const result = parseDrainedInterceptorResult(out);
   if (result.recoveredCount > 0) {
-    const warningKey = JSON.stringify(result.events);
+    const warningKey = JSON.stringify(result.recoveredEvents);
     if (!seenPageBoundaryWarnings.has(warningKey)) {
       seenPageBoundaryWarnings.add(warningKey);
-      const eventNames = recoveredEventNames(result.events);
+      const eventNames = recoveredEventNames(result.recoveredEvents);
       const namesSuffix =
         eventNames.length > 0 ? `: ${eventNames.join(", ")}` : "";
       process.stderr.write(

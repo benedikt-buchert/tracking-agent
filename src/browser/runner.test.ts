@@ -1216,6 +1216,7 @@ describe("drainInterceptor", () => {
       JSON.stringify({
         events: [{ event: "purchase" }],
         recoveredCount: 1,
+        recoveredEvents: [{ event: "purchase" }],
       }),
     ) as unknown as BrowserFn;
     const writeSpy = vi
@@ -1236,6 +1237,7 @@ describe("drainInterceptor", () => {
       JSON.stringify({
         events: [{ event: "purchase" }],
         recoveredCount: 1,
+        recoveredEvents: [{ event: "purchase" }],
       }),
     ) as unknown as BrowserFn;
     const writeSpy = vi
@@ -1327,6 +1329,36 @@ describe("drainInterceptor", () => {
     expect(recoveredCountIdx).toBeGreaterThanOrEqual(0);
     // The interceptor's push should also push into __dl_buffer for same-page drains
     expect(js).toMatch(/__dl_buffer\.push/);
+    // recoveredEvents must be tracked separately from buffer events
+    expect(js).toContain("recoveredEvents");
+  });
+
+  it("warning names come only from sessionStorage-recovered events, not from buffer events on new page", async () => {
+    // Simulate a fresh-install drain where buffer has journey events (rehydrated dataLayer)
+    // and sessionStorage has only the actual boundary event
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ event: "add_to_cart" }, { event: "address_submitted" }],
+        recoveredCount: 1,
+        recoveredEvents: [{ event: "address_submitted" }],
+      }),
+    ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const result = await drainInterceptor(browserFn);
+
+    expect(result).toEqual([
+      { event: "add_to_cart" },
+      { event: "address_submitted" },
+    ]);
+    expect(writeSpy).toHaveBeenCalledWith(
+      expect.stringContaining("address_submitted"),
+    );
+    expect(writeSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("add_to_cart"),
+    );
   });
 });
 
