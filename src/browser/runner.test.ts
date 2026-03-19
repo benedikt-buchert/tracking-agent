@@ -198,6 +198,17 @@ describe("formatAjvError", () => {
       }),
     ).toBe("must be >= 0");
   });
+
+  it("falls back to message when params is null", () => {
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "const",
+        params: null,
+        message: "must be equal to constant",
+      }),
+    ).toBe("must be equal to constant");
+  });
 });
 
 // ─── validateEvent ────────────────────────────────────────────────────────────
@@ -615,6 +626,12 @@ describe("countEventsByType", () => {
     const events = [{ event: "b" }, { event: "a" }, { event: "b" }];
     const counts = countEventsByType(events);
     expect([...counts.keys()]).toEqual(["b", "a"]);
+  });
+
+  it("groups null and primitive values under (unnamed)", () => {
+    const counts = countEventsByType([null, "string", 42, { event: "click" }]);
+    expect(counts.get("(unnamed)")).toBe(3);
+    expect(counts.get("click")).toBe(1);
   });
 });
 
@@ -1201,6 +1218,18 @@ describe("extractPlaybookSteps", () => {
       JSON.stringify(bareSteps);
     expect(extractPlaybookSteps(text)).toEqual(fencedSteps);
   });
+
+  it("extracts steps from a pretty-printed multi-line bare JSON array", () => {
+    const steps = [
+      { tool: "browser_navigate", args: { url: "https://example.com" } },
+    ];
+    const text = JSON.stringify(steps, null, 2);
+    expect(extractPlaybookSteps(text)).toEqual(steps);
+  });
+
+  it("returns null when the JSON array contains a null item", () => {
+    expect(extractPlaybookSteps("[null]")).toBeNull();
+  });
 });
 
 // ─── drainInterceptor ─────────────────────────────────────────────────────────
@@ -1360,6 +1389,46 @@ describe("drainInterceptor", () => {
       expect.stringContaining("add_to_cart"),
     );
   });
+
+  it("omits event name suffix from warning when recovered events have no event field", async () => {
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ type: "gtm.js" }],
+        recoveredCount: 1,
+        recoveredEvents: [{ type: "gtm.js" }],
+      }),
+    ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    await drainInterceptor(browserFn);
+
+    const warning = writeSpy.mock.calls.map(([t]) => String(t)).join("");
+    expect(warning).toContain("page navigation boundary");
+    expect(warning).not.toMatch(/boundary:/);
+  });
+
+  it("skips null and non-object entries when extracting recovered event names", async () => {
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [null, "string", { event: "purchase" }],
+        recoveredCount: 3,
+        recoveredEvents: [null, "string", { event: "purchase" }],
+      }),
+    ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const result = await drainInterceptor(browserFn);
+
+    expect(result).toEqual([null, "string", { event: "purchase" }]);
+    const warning = writeSpy.mock.calls.map(([t]) => String(t)).join("");
+    expect(warning).toContain("purchase");
+    expect(warning).not.toContain("null");
+    expect(warning).not.toContain("string");
+  });
 });
 
 // ─── waitForNavigation ────────────────────────────────────────────────────────
@@ -1413,6 +1482,25 @@ describe("waitForNavigation", () => {
     // networkidle should NOT have been called
     const calls = vi.mocked(browserFn).mock.calls.map((c) => c[0]);
     expect(calls).not.toContainEqual(["wait", "--load", "networkidle"]);
+  });
+
+  it("polls exactly ceil(maxMs/intervalMs) times before giving up", async () => {
+    // intervalMs=2, maxMs=10 → ceil(10/2)=5 attempts.
+    // The arithmetic mutant (maxMs*intervalMs=20) would produce 10 attempts;
+    // the equality mutant (i<=attempts) would produce 6 attempts.
+    const browserFn = vi
+      .fn()
+      .mockResolvedValue(
+        '"https://example.com/checkout"',
+      ) as unknown as BrowserFn;
+    await waitForNavigation("https://example.com/checkout", browserFn, {
+      intervalMs: 2,
+      maxMs: 10,
+    });
+    const evalCalls = vi
+      .mocked(browserFn)
+      .mock.calls.filter((c) => c[0][0] === "eval");
+    expect(evalCalls).toHaveLength(5);
   });
 });
 

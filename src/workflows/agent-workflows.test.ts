@@ -426,6 +426,22 @@ describe("agent workflows", () => {
     ).toContain("raw");
   });
 
+  it("runs a fresh interactive session when resume=true but savedMessages is empty", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [], // empty — no saved messages
+      true, // resume flag is set
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toBe("INITIAL PROMPT");
+  });
+
   it("resumes an existing session without saving a new playbook", async () => {
     const savedMessages = [{ role: "assistant", content: [] }];
     const { runInteractiveMode, mocks } = await setupWorkflowModule({

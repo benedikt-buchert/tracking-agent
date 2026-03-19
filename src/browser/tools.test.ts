@@ -652,6 +652,51 @@ describe("requestHumanInputTool", () => {
 describe("createDataLayerInterceptor", () => {
   const noSettle = { settleMs: 0 };
 
+  it("does not append to accumulator when tool result capturedEvents is empty", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: { capturedEvents: [] },
+      }),
+    });
+
+    await tool.execute("1", {});
+
+    expect(acc).toHaveLength(0);
+  });
+
+  it("appends to accumulator when tool result capturedEvents is non-empty", async () => {
+    const acc: unknown[] = [];
+    const event = { event: "add_to_cart" };
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: { capturedEvents: [event] },
+      }),
+    });
+
+    await tool.execute("1", {});
+
+    expect(acc).toEqual([event]);
+  });
+
   it("drains events both before and after a wrapped tool executes", async () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
