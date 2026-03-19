@@ -17,12 +17,7 @@ import {
   startFixtureSiteServer,
 } from "./site-fixture.js";
 
-const FIXTURES_SCHEMAS_DIR = join(
-  import.meta.dirname,
-  "fixtures",
-  "schemas",
-  "1.3.0",
-);
+const FIXTURES_SCHEMAS_DIR = join(import.meta.dirname, "fixtures");
 const loadSchemaFn = createLocalFirstLoader(FIXTURES_SCHEMAS_DIR);
 
 describe.sequential("agent-browser integration fixture", () => {

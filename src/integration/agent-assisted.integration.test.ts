@@ -26,12 +26,7 @@ const shouldRun =
     !!process.env["XAI_API_KEY"] ||
     !!process.env["GROQ_API_KEY"]);
 
-const FIXTURES_SCHEMAS_DIR = join(
-  import.meta.dirname,
-  "fixtures",
-  "schemas",
-  "1.3.0",
-);
+const FIXTURES_SCHEMAS_DIR = join(import.meta.dirname, "fixtures");
 const loadSchemaFn = createLocalFirstLoader(FIXTURES_SCHEMAS_DIR);
 
 describe.skipIf(!shouldRun)("agent-assisted integration fixture", () => {
