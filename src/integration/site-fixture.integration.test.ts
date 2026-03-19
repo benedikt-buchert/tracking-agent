@@ -80,6 +80,35 @@ describe("integration site fixture", () => {
     ]);
   });
 
+  it("waits for networkidle after delayed-navigation button clicks in the stable playbook", () => {
+    const deterministic = fixtureScenarios.find(
+      (scenario) => scenario.name === "deterministic",
+    );
+    expect(deterministic).toBeDefined();
+    const playbook = deterministic!.deterministicPlaybook;
+
+    const continueToPamentIdx = playbook.findIndex(
+      (step) =>
+        step.tool === "browser_find" &&
+        step.args["value"] === "continue-to-payment",
+    );
+    expect(continueToPamentIdx).toBeGreaterThanOrEqual(0);
+    expect(playbook[continueToPamentIdx + 1]).toEqual({
+      tool: "browser_wait",
+      args: { load: "networkidle" },
+    });
+
+    const placeOrderIdx = playbook.findIndex(
+      (step) =>
+        step.tool === "browser_find" && step.args["value"] === "place-order",
+    );
+    expect(placeOrderIdx).toBeGreaterThanOrEqual(0);
+    expect(playbook[placeOrderIdx + 1]).toEqual({
+      tool: "browser_wait",
+      args: { load: "networkidle" },
+    });
+  });
+
   it("serves deterministic, mutated, and ephemeral pages with their intended selector and timing behavior", async () => {
     const server = await startFixtureSiteServer();
     closers.push(server.close);

@@ -69,6 +69,10 @@ const deterministicStablePlaybook: FixtureScenario["deterministicPlaybook"] = [
   },
   {
     tool: "browser_wait",
+    args: { load: "networkidle" },
+  },
+  {
+    tool: "browser_wait",
     args: { selector: '[data-testid="card-number"]' },
   },
   {
@@ -101,6 +105,10 @@ const deterministicStablePlaybook: FixtureScenario["deterministicPlaybook"] = [
   {
     tool: "browser_find",
     args: { locator: "testid", value: "place-order", action: "click" },
+  },
+  {
+    tool: "browser_wait",
+    args: { load: "networkidle" },
   },
   {
     tool: "browser_wait",

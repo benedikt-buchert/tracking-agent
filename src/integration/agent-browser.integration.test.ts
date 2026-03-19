@@ -286,7 +286,7 @@ describe.sequential("agent-browser integration fixture", () => {
 
     await navigateTo(`${server.baseUrl}${ephemeral!.route}`);
 
-    for (const step of ephemeral!.deterministicPlaybook.slice(0, 12)) {
+    for (const step of ephemeral!.deterministicPlaybook.slice(0, 13)) {
       const tool = tools.find((candidate) => candidate.name === step.tool);
       if (!tool) throw new Error(`Missing tool ${step.tool}`);
       await tool.execute("integration", step.args as never);
