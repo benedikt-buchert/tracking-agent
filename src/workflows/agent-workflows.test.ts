@@ -12,6 +12,7 @@ interface SetupOptions {
     tool: string;
     args: Record<string, unknown>;
   }> | null;
+  finalAgentEvent?: Record<string, unknown>;
 }
 
 class FakeAgent {
@@ -93,7 +94,12 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
         toolCallId: "tool-1",
       });
     }
-    agent.emit({ type: "turn_end", message: { stopReason: "stop" } });
+    agent.emit(
+      options.finalAgentEvent ?? {
+        type: "turn_end",
+        message: { stopReason: "stop" },
+      },
+    );
   });
 
   vi.doMock("../browser/runner.js", () => ({
@@ -360,6 +366,28 @@ describe("agent workflows", () => {
     );
 
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
+  });
+
+  it("does not save a session when the agent emits no turn_end event", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      finalAgentEvent: { type: "message_update", assistantMessageEvent: {} },
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.saveSession).not.toHaveBeenCalled();
   });
 
   it("saves raw recorded steps when optimization parsing fails in interactive mode", async () => {

@@ -149,6 +149,12 @@ describe("formatAjvError", () => {
     expect(formatAjvError({ weird: true })).toBe('{"weird":true}');
   });
 
+  it("stringifies null and primitive values", () => {
+    expect(formatAjvError(null)).toBe("null");
+    expect(formatAjvError(42)).toBe("42");
+    expect(formatAjvError(false)).toBe("false");
+  });
+
   it("falls back to JSON.stringify when a structured error has no usable message", () => {
     expect(
       formatAjvError({
@@ -157,6 +163,39 @@ describe("formatAjvError", () => {
         params: {},
       }),
     ).toBe('{"instancePath":"/event","keyword":"const","params":{}}');
+  });
+
+  it("falls back to the raw message when required params are malformed", () => {
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "required",
+        params: { missingProperty: 42 },
+        message: "must have required property",
+      }),
+    ).toBe("must have required property");
+  });
+
+  it("falls back to the raw message when additionalProperties params are malformed", () => {
+    expect(
+      formatAjvError({
+        instancePath: "",
+        keyword: "additionalProperties",
+        params: { additionalProperty: 42 },
+        message: "must NOT have additional properties",
+      }),
+    ).toBe("must NOT have additional properties");
+  });
+
+  it("uses an empty prefix when instancePath is not a string", () => {
+    expect(
+      formatAjvError({
+        instancePath: 42,
+        keyword: "minimum",
+        params: {},
+        message: "must be >= 0",
+      }),
+    ).toBe("must be >= 0");
   });
 });
 
@@ -235,6 +274,19 @@ describe("validateEvent", () => {
     );
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatch(/validator.*unreachable|ECONNREFUSED/i);
+  });
+
+  it("stringifies non-Error thrown values from the validator", async () => {
+    vi.spyOn(global, "fetch").mockRejectedValueOnce("network down");
+
+    const result = await validateEvent(
+      { event: "purchase" },
+      "https://example.com/purchase.json",
+    );
+    expect(result).toEqual({
+      valid: false,
+      errors: ["Validator unreachable: network down"],
+    });
   });
 
   it("sends the schema URL as a query param and does not inject $schema into the event body", async () => {
@@ -325,6 +377,21 @@ describe("validateAll", () => {
     const results = await validateAll([], schemas, ENTRY_URL);
     expect(results).toEqual([]);
   });
+
+  it("preserves original event indexes when skipped events appear earlier", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ valid: true, errors: [] }),
+    } as Response);
+
+    const results = await validateAll(
+      [{ event: "gtm.js" }, { event: "purchase" }],
+      schemas,
+      ENTRY_URL,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]?.index).toBe(1);
+  });
 });
 
 // ─── generateReport ───────────────────────────────────────────────────────────
@@ -400,6 +467,8 @@ describe("generateReport", () => {
     expect(report).toContain("purchase");
     expect(report).toContain("2");
     expect(report).toContain("gtm.js");
+    expect(report).toContain("dataLayer pushes (4 total)");
+    expect(report).toContain("purchase                         ×2");
   });
 
   it("does not add a counts section when allEvents is not provided", () => {
@@ -468,6 +537,52 @@ describe("generateReport", () => {
     expect(report).not.toContain("✔ Passing events");
     expect(report).not.toContain("✖ Failing events");
     expect(report).not.toContain("⚠ Expected events not observed");
+  });
+
+  it("omits schema description lines when a failing event has no matching description", () => {
+    const report = generateReport([failing], ["add_to_cart"], undefined, [
+      {
+        eventName: "purchase",
+        schemaUrl: "https://example.com/schemas/web/purchase.json",
+        description: "Purchase",
+      },
+    ]);
+    expect(report).toContain(
+      "Schema URL: https://example.com/schemas/web/add-to-cart.json",
+    );
+    expect(report).not.toContain("Schema: Cart addition");
+  });
+
+  it("uses (unnamed) for passing events without an event name", () => {
+    const unnamed: EventValidationResult = {
+      index: 2,
+      event: { page: "/home" },
+      eventName: undefined,
+      schemaUrl: "https://example.com/schemas/web/page.json",
+      result: { valid: true, errors: [] },
+    };
+    const report = generateReport([unnamed], []);
+    expect(report).toContain("[2] (unnamed)");
+  });
+
+  it("omits the missing-events section when every expected event was observed", () => {
+    const report = generateReport(
+      [passing, failing],
+      ["purchase", "add_to_cart"],
+    );
+    expect(report).not.toContain("⚠ Expected events not observed");
+  });
+
+  it("omits the failing-events section when every result is valid", () => {
+    const report = generateReport([passing], ["purchase"]);
+    expect(report).not.toContain("✖ Failing events");
+    expect(report).toContain("✔ Passing events");
+  });
+
+  it("omits the passing-events section when every result is invalid", () => {
+    const report = generateReport([failing], ["add_to_cart"]);
+    expect(report).not.toContain("✔ Passing events");
+    expect(report).toContain("✖ Failing events");
   });
 });
 
@@ -696,6 +811,10 @@ describe("parseBrowserJsonArray", () => {
   it("returns an empty array for invalid output", () => {
     expect(parseBrowserJsonArray("not-json")).toEqual([]);
   });
+
+  it("returns an empty array when the parsed value is not an array", () => {
+    expect(parseBrowserJsonArray('{"event":"purchase"}')).toEqual([]);
+  });
 });
 
 describe("runBrowserEval", () => {
@@ -715,6 +834,18 @@ describe("getCurrentUrl", () => {
       "https://example.com/checkout",
     );
   });
+
+  it("returns an unquoted URL unchanged", async () => {
+    const browserFn = vi.fn().mockResolvedValue("https://example.com/checkout");
+    await expect(getCurrentUrl(browserFn)).resolves.toBe(
+      "https://example.com/checkout",
+    );
+  });
+
+  it("returns an empty string when browser eval fails", async () => {
+    const browserFn = vi.fn().mockRejectedValue(new Error("boom"));
+    await expect(getCurrentUrl(browserFn)).resolves.toBe("");
+  });
 });
 
 describe("runAgentBrowser", () => {
@@ -732,6 +863,97 @@ describe("runAgentBrowser", () => {
       ["open", 'https://example.com?q=a"b'],
       { timeout: 30_000 },
       expect.any(Function),
+    );
+  });
+
+  it("prefers trimmed stdout when execFile succeeds", async () => {
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(null, "  from-stdout  ", "  from-stderr  ");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "from-stdout",
+    );
+  });
+
+  it("falls back to trimmed stderr when stdout is empty on success", async () => {
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(null, "   ", "  from-stderr  ");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "from-stderr",
+    );
+  });
+
+  it("returns an empty string when both stdout and stderr are empty on success", async () => {
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(null, "   ", "   ");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe("");
+  });
+
+  it("prefers error stdout over error stderr and callback stderr", async () => {
+    const error = Object.assign(new Error("failed"), {
+      stdout: "  from-error-stdout  ",
+      stderr: "  from-error-stderr  ",
+    });
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(error, "ignored", "from-callback-stderr");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "from-error-stdout",
+    );
+  });
+
+  it("falls back to error stderr when error stdout is empty", async () => {
+    const error = Object.assign(new Error("failed"), {
+      stdout: "   ",
+      stderr: "  from-error-stderr  ",
+    });
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(error, "ignored", "from-callback-stderr");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "from-error-stderr",
+    );
+  });
+
+  it("falls back to callback stderr when error stdout and stderr are empty", async () => {
+    const error = Object.assign(new Error("failed"), {
+      stdout: "   ",
+      stderr: "   ",
+    });
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(error, "ignored", "  from-callback-stderr  ");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "from-callback-stderr",
+    );
+  });
+
+  it("falls back to the error message when no stdio output exists", async () => {
+    const error = Object.assign(new Error("failed hard"), {
+      stdout: "",
+      stderr: "",
+    });
+    const execFileFn = vi.fn((_file, _args, _options, callback) => {
+      callback(error, "", "");
+      return {} as never;
+    });
+
+    await expect(runAgentBrowser(["snapshot"], execFileFn)).resolves.toBe(
+      "failed hard",
     );
   });
 });
