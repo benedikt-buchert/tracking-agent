@@ -82,6 +82,10 @@ describe("workflow runtime", () => {
     );
     expect(mocks.discoverEventSchemas).not.toHaveBeenCalled();
     expect(result.savedMessages).toEqual([{ role: "assistant", content: [] }]);
+    expect(stderr.mock.calls.join("")).toContain("Loading session");
+    expect(stderr.mock.calls.join("")).toContain(
+      "Restored 1 schema(s), 1 messages",
+    );
   });
 
   it("discovers schemas when not resuming", async () => {
@@ -95,6 +99,10 @@ describe("workflow runtime", () => {
     );
     expect(result.eventSchemas).toHaveLength(1);
     expect(result.savedMessages).toEqual([]);
+    expect(stderr.mock.calls.join("")).toContain(
+      "Discovering schemas from https://example.com/schema.json",
+    );
+    expect(stderr.mock.calls.join("")).toContain("Found 1 event schema(s)");
   });
 
   it("starts headed browser when headless is false", async () => {
@@ -104,6 +112,8 @@ describe("workflow runtime", () => {
 
     expect(mocks.startHeadedBrowser).toHaveBeenCalledTimes(1);
     expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(stderr.mock.calls.join("")).toContain("Starting headed browser");
+    expect(stderr.mock.calls.join("")).toContain("Opening https://example.com");
   });
 
   it("skips headed startup and clears AGENT_BROWSER_HEADED in headless mode", async () => {
@@ -115,6 +125,7 @@ describe("workflow runtime", () => {
     expect(mocks.startHeadedBrowser).not.toHaveBeenCalled();
     expect(process.env["AGENT_BROWSER_HEADED"]).toBeUndefined();
     expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(stderr.mock.calls.join("")).toContain("Starting headless browser");
   });
 
   it("captures pre- and post-navigation events", async () => {
@@ -132,6 +143,8 @@ describe("workflow runtime", () => {
       { event: "pre" },
       { event: "post" },
     ]);
+    expect(stderr.mock.calls.join("")).toContain("Capturing dataLayer events");
+    expect(stderr.mock.calls.join("")).toContain("Captured 3 event(s)");
   });
 
   it("delegates browser shutdown", async () => {

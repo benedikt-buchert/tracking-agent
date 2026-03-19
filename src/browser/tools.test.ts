@@ -91,6 +91,10 @@ describe("createNavigateTool", () => {
     expect((result.content[0] as { text: string }).text).toBe(
       "Navigated successfully",
     );
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Navigated successfully" }],
+      details: {},
+    });
   });
 });
 
@@ -123,6 +127,8 @@ describe("createSnapshotTool", () => {
     expect((result.content[0] as { text: string }).text).toBe(
       "- button @e1\n- link @e2",
     );
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect(result.details).toEqual({});
   });
 });
 
@@ -145,6 +151,7 @@ describe("createClickTool", () => {
     const tool = createClickTool(mockBrowser(""));
     const result = await tool.execute("1", { selector: "@e3" });
     expect((result.content[0] as { text: string }).text).toBe("Clicked");
+    expect(result.details).toEqual({});
   });
 
   it("returns browser error output as text", async () => {
@@ -170,6 +177,13 @@ describe("createFillTool", () => {
     await tool.execute("1", { selector: "@e1", text: "hello" });
     expect(browserFn).toHaveBeenCalledWith(["fill", "@e1", "hello"]);
   });
+
+  it("returns fallback when output is empty", async () => {
+    const tool = createFillTool(mockBrowser(""));
+    const result = await tool.execute("1", { selector: "@e1", text: "hello" });
+    expect((result.content[0] as { text: string }).text).toBe("Filled");
+    expect(result.details).toEqual({});
+  });
 });
 
 describe("fillTool", () => {
@@ -186,6 +200,15 @@ describe("createEvalTool", () => {
     const result = await tool.execute("1", { js: "1 + 1" });
     expect(browserFn).toHaveBeenCalledWith(["eval", "1 + 1"]);
     expect((result.content[0] as { text: string }).text).toBe("42");
+  });
+
+  it("returns exact text-result shape", async () => {
+    const tool = createEvalTool(mockBrowser("ok"));
+    const result = await tool.execute("1", { js: "1 + 1" });
+    expect(result).toEqual({
+      content: [{ type: "text", text: "ok" }],
+      details: {},
+    });
   });
 });
 
@@ -216,6 +239,27 @@ describe("createWaitTool", () => {
     const tool = createWaitTool(browserFn);
     await tool.execute("1", { selector: ".checkout button" });
     expect(browserFn).toHaveBeenCalledWith(["wait", ".checkout button"]);
+  });
+
+  it("supports legacy target load-state syntax", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", { target: "--load networkidle" });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "--load", "networkidle"]);
+  });
+
+  it("falls back to target string when provided", async () => {
+    const browserFn = mockBrowser("done");
+    const tool = createWaitTool(browserFn);
+    await tool.execute("1", { target: "#checkout" });
+    expect(browserFn).toHaveBeenCalledWith(["wait", "#checkout"]);
+  });
+
+  it("returns fallback text when output is empty", async () => {
+    const tool = createWaitTool(mockBrowser(""));
+    const result = await tool.execute("1", { ms: 1000 });
+    expect((result.content[0] as { text: string }).text).toBe("Wait complete");
+    expect(result.details).toEqual({});
   });
 });
 
@@ -332,6 +376,15 @@ describe("createScreenshotTool", () => {
     await tool.execute("1", { path: "/tmp/shot.png" });
     expect(browserFn).toHaveBeenCalledWith(["screenshot", "/tmp/shot.png"]);
   });
+
+  it("returns fallback when output is empty", async () => {
+    const tool = createScreenshotTool(mockBrowser(""));
+    const result = await tool.execute("1", {});
+    expect((result.content[0] as { text: string }).text).toBe(
+      "Screenshot taken",
+    );
+    expect(result.details).toEqual({});
+  });
 });
 
 // ─── createFindTool ───────────────────────────────────────────────────────────
@@ -363,6 +416,34 @@ describe("createFindTool", () => {
       "fill",
       "test@example.com",
     ]);
+  });
+
+  it("does not append fill_text when the action is click", async () => {
+    const browserFn = mockBrowser("clicked");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", {
+      locator: "text",
+      value: "Checkout",
+      action: "click",
+      fill_text: "ignored",
+    });
+    expect(browserFn).toHaveBeenCalledWith([
+      "find",
+      "text",
+      "Checkout",
+      "click",
+    ]);
+  });
+
+  it("returns fallback when output is empty", async () => {
+    const tool = createFindTool(mockBrowser(""));
+    const result = await tool.execute("1", {
+      locator: "text",
+      value: "Checkout",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("Done");
+    expect(result.details).toEqual({});
   });
 });
 
@@ -426,6 +507,30 @@ describe("requestHumanInputTool", () => {
     expect((result.content[0] as { text: string }).text.toLowerCase()).toMatch(
       /continue|done|completed/,
     );
+  });
+
+  it("includes the current URL when available", async () => {
+    const written: string[] = [];
+    const tool = createRequestHumanInputTool(
+      vi.fn().mockResolvedValue(""),
+      (s) => written.push(s),
+      async () => "https://example.com/checkout",
+    );
+    await tool.execute("1", { message: "Continue manually" });
+    expect(written.join("")).toContain("https://example.com/checkout");
+  });
+
+  it("omits the current URL line when URL resolution fails", async () => {
+    const written: string[] = [];
+    const tool = createRequestHumanInputTool(
+      vi.fn().mockResolvedValue(""),
+      (s) => written.push(s),
+      async () => {
+        throw new Error("no url");
+      },
+    );
+    await tool.execute("1", { message: "Continue manually" });
+    expect(written.join("")).not.toContain("Browser is at:");
   });
 
   it("is included in allTools", () => {

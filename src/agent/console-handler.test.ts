@@ -84,6 +84,13 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).toContain("browser_snapshot");
   });
 
+  it("does not add a separator when a tool has no summary detail", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeToolStart("browser_snapshot"));
+    expect(err.join("")).not.toContain("—");
+  });
+
   it("shows the URL arg for browser_navigate", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
@@ -170,6 +177,18 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).not.toContain("x".repeat(61));
   });
 
+  it("falls back to js for browser_eval when expression is absent", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_eval",
+      args: { js: "window.location.href" },
+    });
+    expect(err.join("")).toContain("window.location.href");
+  });
+
   it("shows load state for browser_wait before selector or timeout", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
@@ -195,6 +214,18 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).toContain("2500");
   });
 
+  it("falls back to selector for browser_wait when load is absent", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_wait",
+      args: { selector: "#ready" },
+    });
+    expect(err.join("")).toContain("#ready");
+  });
+
   it("shows from_index for get_datalayer", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
@@ -205,6 +236,18 @@ describe("createConsoleHandler", () => {
       args: { from_index: 3 },
     });
     expect(err.join("")).toContain("3");
+  });
+
+  it("defaults get_datalayer to index 0 when from_index is absent", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "get_datalayer",
+      args: {},
+    });
+    expect(err.join("")).toContain("from index 0");
   });
 
   it("truncates request_human_input messages to 80 characters", () => {
@@ -246,6 +289,17 @@ describe("createConsoleHandler", () => {
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
     handler(makeTurnEndError("400 Your credit balance is too low"));
     expect(err.join("")).toContain("400 Your credit balance is too low");
+  });
+
+  it("falls back to Unknown error when the turn_end event has no errorMessage", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "turn_end",
+      message: { ...stubMsg, stopReason: "error" as const },
+      toolResults: [],
+    });
+    expect(err.join("")).toContain("Unknown error");
   });
 
   it("includes a hint to check billing on credit error", () => {

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   createAgent,
   resolveModel,
@@ -68,6 +71,13 @@ describe("checkApiKey", () => {
     expect(error.message).toMatch(/OPENAI_API_KEY/);
   });
 
+  it("uses a derived API key variable name for unknown providers", () => {
+    process.env = { ...env, MODEL_PROVIDER: "my-provider" };
+    delete process.env["MY_PROVIDER_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error.message).toMatch(/MY_PROVIDER_API_KEY/);
+  });
+
   it("does not throw for google-vertex when GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and ADC credentials are present", () => {
     process.env = {
       ...env,
@@ -102,6 +112,40 @@ describe("checkApiKey", () => {
     const error = getConfigurationError(() => checkApiKey());
     expect(error).toBeInstanceOf(ConfigurationError);
     expect(error.message).toMatch(/GOOGLE_CLOUD_LOCATION/);
+  });
+
+  it("accepts GCLOUD_PROJECT as a fallback project variable for google-vertex", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GCLOUD_PROJECT: "my-project",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+      GOOGLE_CLOUD_API_KEY: "vertex-test-key",
+    };
+    delete process.env["GOOGLE_CLOUD_PROJECT"];
+    expect(() => checkApiKey()).not.toThrow();
+  });
+
+  it("accepts GOOGLE_APPLICATION_CREDENTIALS when the file exists", () => {
+    const credentialsPath = join(
+      tmpdir(),
+      `gcloud-test-${Date.now()}-${Math.random()}.json`,
+    );
+    writeFileSync(credentialsPath, "{}");
+
+    try {
+      process.env = {
+        ...env,
+        MODEL_PROVIDER: "google-vertex",
+        GOOGLE_CLOUD_PROJECT: "my-project",
+        GOOGLE_CLOUD_LOCATION: "us-central1",
+        GOOGLE_APPLICATION_CREDENTIALS: credentialsPath,
+      };
+      delete process.env["GOOGLE_CLOUD_API_KEY"];
+      expect(() => checkApiKey()).not.toThrow();
+    } finally {
+      unlinkSync(credentialsPath);
+    }
   });
 
   it("includes gcloud setup hint in the thrown error message for google-vertex", () => {
@@ -229,6 +273,19 @@ describe("buildAgentTools", () => {
     expect(tools).toHaveLength(allTools.length - 1);
   });
 
+  it("wraps action tools with polling but leaves non-action tools unchanged", () => {
+    const { tools } = buildAgentTools([], false);
+    const originalClick = allTools.find((t) => t.name === "browser_click");
+    const builtClick = tools.find((t) => t.name === "browser_click");
+    const originalEval = allTools.find((t) => t.name === "browser_eval");
+    const builtEval = tools.find((t) => t.name === "browser_eval");
+
+    expect(builtClick).toBeDefined();
+    expect(originalClick).toBeDefined();
+    expect(builtClick).not.toBe(originalClick);
+    expect(builtEval).toBe(originalEval);
+  });
+
   it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {
     const { tools } = buildAgentTools([], true);
     const hitTool = tools.find((t) => t.name === "request_human_input")!;
@@ -303,6 +360,30 @@ describe("collectAgentText", () => {
     const agent = createAgent();
     vi.spyOn(agent, "subscribe").mockImplementation(() => undefined as never);
     vi.spyOn(agent, "prompt").mockResolvedValue({} as never);
+    expect(await collectAgentText(agent, "prompt")).toBe("");
+  });
+
+  it("ignores non-text message updates", async () => {
+    const agent = createAgent();
+    let captured: ((e: AgentEvent) => void) | null = null;
+    vi.spyOn(agent, "subscribe").mockImplementation((fn) => {
+      captured = fn as (e: AgentEvent) => void;
+      return undefined as never;
+    });
+    vi.spyOn(agent, "prompt").mockImplementation(async () => {
+      captured?.({
+        type: "message_update",
+        message: {} as never,
+        assistantMessageEvent: {
+          type: "tool_use",
+          id: "tool-1",
+          name: "browser_click",
+          input: {},
+          partial: {} as never,
+        },
+      } as never);
+      return {} as never;
+    });
     expect(await collectAgentText(agent, "prompt")).toBe("");
   });
 

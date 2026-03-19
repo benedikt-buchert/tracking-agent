@@ -109,18 +109,9 @@ function collectFunctionCandidates(
   const functions: FunctionCandidate[] = [];
 
   function visit(node: ts.Node): void {
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      functions.push({ name: node.name.text, node });
-    } else if (ts.isMethodDeclaration(node) && node.name) {
-      functions.push({ name: node.name.getText(sourceFile), node });
-    } else if (
-      ts.isVariableDeclaration(node) &&
-      node.initializer &&
-      (ts.isArrowFunction(node.initializer) ||
-        ts.isFunctionExpression(node.initializer)) &&
-      ts.isIdentifier(node.name)
-    ) {
-      functions.push({ name: node.name.text, node: node.initializer });
+    const candidate = toFunctionCandidate(node, sourceFile);
+    if (candidate !== undefined) {
+      functions.push(candidate);
     }
 
     ts.forEachChild(node, visit);
@@ -134,25 +125,7 @@ function computeCyclomaticComplexity(node: ts.Node): number {
   let complexity = 1;
 
   function visit(child: ts.Node): void {
-    if (
-      ts.isIfStatement(child) ||
-      ts.isConditionalExpression(child) ||
-      ts.isForStatement(child) ||
-      ts.isForInStatement(child) ||
-      ts.isForOfStatement(child) ||
-      ts.isWhileStatement(child) ||
-      ts.isDoStatement(child) ||
-      ts.isCatchClause(child)
-    ) {
-      complexity += 1;
-    } else if (ts.isCaseClause(child)) {
-      complexity += 1;
-    } else if (
-      ts.isBinaryExpression(child) &&
-      (child.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-        child.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-        child.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
-    ) {
+    if (increasesCyclomaticComplexity(child)) {
       complexity += 1;
     }
 
@@ -189,4 +162,52 @@ function isRangeInside(
   endLine: number,
 ): boolean {
   return location.start.line >= startLine && location.end.line <= endLine;
+}
+
+function toFunctionCandidate(
+  node: ts.Node,
+  sourceFile: ts.SourceFile,
+): FunctionCandidate | undefined {
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    return { name: node.name.text, node };
+  }
+
+  if (ts.isMethodDeclaration(node) && node.name) {
+    return { name: node.name.getText(sourceFile), node };
+  }
+
+  if (
+    ts.isVariableDeclaration(node) &&
+    node.initializer &&
+    (ts.isArrowFunction(node.initializer) ||
+      ts.isFunctionExpression(node.initializer)) &&
+    ts.isIdentifier(node.name)
+  ) {
+    return { name: node.name.text, node: node.initializer };
+  }
+
+  return undefined;
+}
+
+function increasesCyclomaticComplexity(node: ts.Node): boolean {
+  if (
+    ts.isIfStatement(node) ||
+    ts.isConditionalExpression(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isWhileStatement(node) ||
+    ts.isDoStatement(node) ||
+    ts.isCatchClause(node) ||
+    ts.isCaseClause(node)
+  ) {
+    return true;
+  }
+
+  return (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+  );
 }

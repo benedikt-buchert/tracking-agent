@@ -120,20 +120,32 @@ export function formatAjvError(e: unknown): string {
   if (typeof e === "string") return e;
   if (e === null || typeof e !== "object") return JSON.stringify(e);
 
-  const err = e as Record<string, unknown>;
-  const instancePath =
-    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
-  const keyword = typeof err["keyword"] === "string" ? err["keyword"] : "";
-  const params =
-    err["params"] !== null && typeof err["params"] === "object"
-      ? (err["params"] as Record<string, unknown>)
-      : {};
-  const message = typeof err["message"] === "string" ? err["message"] : "";
-  const prefix = instancePath ? `${instancePath} ` : "";
+  const { keyword, params, message, prefix } = parseAjvErrorObject(
+    e as Record<string, unknown>,
+  );
   return (
     formatAjvKeywordError(keyword, params, prefix) ??
     (message ? `${prefix}${message}` : JSON.stringify(e))
   );
+}
+
+function parseAjvErrorObject(err: Record<string, unknown>): {
+  keyword: string;
+  params: Record<string, unknown>;
+  message: string;
+  prefix: string;
+} {
+  const instancePath =
+    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
+  return {
+    keyword: typeof err["keyword"] === "string" ? err["keyword"] : "",
+    params:
+      err["params"] !== null && typeof err["params"] === "object"
+        ? (err["params"] as Record<string, unknown>)
+        : {},
+    message: typeof err["message"] === "string" ? err["message"] : "",
+    prefix: instancePath ? `${instancePath} ` : "",
+  };
 }
 
 function formatAjvKeywordError(

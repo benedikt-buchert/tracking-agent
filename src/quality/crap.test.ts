@@ -19,6 +19,14 @@ describe("calculateCrap", () => {
   it("uses partial coverage in the CRAP formula", () => {
     expect(calculateCrap(4, 50)).toBe(6);
   });
+
+  it("clamps coverage above 100 percent", () => {
+    expect(calculateCrap(4, 120)).toBe(4);
+  });
+
+  it("clamps coverage below 0 percent", () => {
+    expect(calculateCrap(4, -10)).toBe(20);
+  });
 });
 
 describe("isAnalyzableSourceFile", () => {
@@ -30,6 +38,11 @@ describe("isAnalyzableSourceFile", () => {
     expect(isAnalyzableSourceFile("src/runner.test.ts")).toBe(false);
     expect(isAnalyzableSourceFile("dist/runner.js")).toBe(false);
     expect(isAnalyzableSourceFile("README.md")).toBe(false);
+  });
+
+  it("excludes TypeScript files outside src and non-ts files inside src", () => {
+    expect(isAnalyzableSourceFile("lib/schema.ts")).toBe(false);
+    expect(isAnalyzableSourceFile("src/schema.js")).toBe(false);
   });
 });
 
@@ -86,6 +99,115 @@ export function noop() {}
       statementCoverage: 0,
       crap: 2,
     });
+  });
+
+  it("collects named variable functions and methods with in-range coverage only", () => {
+    const sourceText = `
+const helper = () => 1;
+class Example {
+  method(flag: boolean) {
+    return flag ? 1 : 0;
+  }
+}
+`;
+
+    const reports = collectFunctionReports("src/example.ts", sourceText, {
+      path: "src/example.ts",
+      statementMap: {
+        "0": {
+          start: { line: 2, column: 0 },
+          end: { line: 2, column: 22 },
+        },
+        "1": {
+          start: { line: 4, column: 4 },
+          end: { line: 4, column: 24 },
+        },
+        "2": {
+          start: { line: 10, column: 0 },
+          end: { line: 10, column: 5 },
+        },
+      },
+      s: { "0": 1, "1": 0, "2": 1 },
+    });
+
+    expect(reports).toHaveLength(2);
+    expect(reports).toEqual([
+      expect.objectContaining({
+        name: "helper",
+        startLine: 2,
+        endLine: 2,
+        statementCoverage: 100,
+      }),
+      expect.objectContaining({
+        name: "method",
+        complexity: 2,
+        startLine: 4,
+        endLine: 6,
+        statementCoverage: 0,
+      }),
+    ]);
+  });
+
+  it("counts case clauses and logical operators toward cyclomatic complexity", () => {
+    const sourceText = `
+const advanced = (value: number | null) => {
+  switch (value) {
+    case 1:
+      return value ?? 0;
+    default:
+      return value && value > 0 ? value : 0;
+  }
+};
+`;
+
+    const reports = collectFunctionReports("src/advanced.ts", sourceText, {
+      path: "src/advanced.ts",
+      statementMap: {
+        "0": {
+          start: { line: 4, column: 6 },
+          end: { line: 4, column: 23 },
+        },
+        "1": {
+          start: { line: 6, column: 6 },
+          end: { line: 6, column: 39 },
+        },
+      },
+      s: { "0": 1, "1": 1 },
+    });
+
+    expect(reports).toEqual([
+      expect.objectContaining({
+        name: "advanced",
+        complexity: 5,
+        statementCoverage: 100,
+      }),
+    ]);
+  });
+
+  it("supports function expressions assigned to variables", () => {
+    const sourceText = `
+const expression = function named(value: boolean) {
+  return value ? 1 : 0;
+};
+`;
+
+    const reports = collectFunctionReports("src/expression.ts", sourceText, {
+      path: "src/expression.ts",
+      statementMap: {
+        "0": {
+          start: { line: 2, column: 2 },
+          end: { line: 2, column: 24 },
+        },
+      },
+      s: { "0": 1 },
+    });
+
+    expect(reports).toEqual([
+      expect.objectContaining({
+        name: "expression",
+        complexity: 2,
+      }),
+    ]);
   });
 });
 

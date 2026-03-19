@@ -21,6 +21,9 @@ async function setupMainModule() {
   const validateAll = vi.fn().mockResolvedValue([{ valid: true, errors: [] }]);
   const generateReport = vi.fn().mockReturnValue("REPORT");
   const closeRunBrowser = vi.fn().mockResolvedValue(undefined);
+  const saveReportFolder = vi.fn().mockResolvedValue(null);
+  const drainInterceptor = vi.fn().mockResolvedValue([]);
+  const captureFinalEvents = vi.fn().mockResolvedValue([{ event: "purchase" }]);
 
   vi.doMock("./cli/args.js", () => ({ resolveArgs, parseArgs: vi.fn() }));
   vi.doMock("./cli/help.js", () => ({
@@ -44,7 +47,7 @@ async function setupMainModule() {
     createConsoleHandler: vi.fn(),
   }));
   vi.doMock("./workflows/runtime.js", () => ({
-    captureFinalEvents: vi.fn().mockResolvedValue([{ event: "purchase" }]),
+    captureFinalEvents,
     closeRunBrowser,
     loadRunState,
     openBrowser,
@@ -56,9 +59,9 @@ async function setupMainModule() {
     runInteractiveMode,
   }));
   vi.doMock("./browser/runner.js", () => ({
-    drainInterceptor: vi.fn().mockResolvedValue([]),
+    drainInterceptor,
     generateReport,
-    saveReportFolder: vi.fn().mockResolvedValue(null),
+    saveReportFolder,
     validateAll,
   }));
   vi.doMock("./browser/tools.js", () => ({ allTools: [] }));
@@ -78,6 +81,9 @@ async function setupMainModule() {
       validateAll,
       generateReport,
       closeRunBrowser,
+      saveReportFolder,
+      drainInterceptor,
+      captureFinalEvents,
     },
   };
 }
@@ -135,6 +141,14 @@ describe("main composition", () => {
     expect(mocks.generateReport).toHaveBeenCalledTimes(1);
     expect(stdout).toHaveBeenCalledWith("REPORT");
     expect(mocks.closeRunBrowser).toHaveBeenCalledTimes(1);
+    expect(mocks.captureFinalEvents).toHaveBeenCalledWith([]);
+    expect(mocks.saveReportFolder).toHaveBeenCalledWith(
+      "tracking-reports",
+      [{ event: "purchase" }],
+      [{ valid: true, errors: [] }],
+      ["purchase"],
+      "REPORT",
+    );
   });
 
   it("delegates non-replay runs to the interactive workflow", async () => {
@@ -160,5 +174,59 @@ describe("main composition", () => {
 
     expect(mocks.runInteractiveMode).toHaveBeenCalledTimes(1);
     expect(mocks.runReplayMode).not.toHaveBeenCalled();
+    expect(stderr.mock.calls.join("")).toContain("Mode: resume");
+    expect(stderr.mock.calls.join("")).toContain("Browser: headless");
+  });
+
+  it("prints replay mode in the startup banner", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: true,
+      headless: false,
+    });
+
+    await main();
+
+    expect(stderr.mock.calls.join("")).toContain("Mode: replay");
+    expect(stderr.mock.calls.join("")).not.toContain("Browser: headless");
+  });
+
+  it("writes the saved report path when report persistence succeeds", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+    mocks.saveReportFolder.mockResolvedValue("/tmp/report-dir");
+
+    await main();
+
+    expect(stderr.mock.calls.join("")).toContain("Report saved");
+    expect(stderr.mock.calls.join("")).toContain("/tmp/report-dir");
+  });
+
+  it("passes landing events into the agent tool builder", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+    mocks.drainInterceptor.mockResolvedValue([{ event: "landing" }]);
+
+    await main();
+
+    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
+      [{ event: "landing" }],
+      false,
+    );
   });
 });

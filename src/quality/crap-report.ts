@@ -25,12 +25,43 @@ type CoverageReport = Record<string, IstanbulFileCoverage>;
 const ROOT = resolve(import.meta.dirname, "..", "..");
 const COVERAGE_PATH = resolve(ROOT, "coverage", "coverage-final.json");
 
-function main(): void {
-  const options = parseArgs(process.argv.slice(2));
+type ExecFileSyncFn = typeof execFileSync;
+type ReadFileSyncFn = typeof readFileSync;
+type ReaddirSyncFn = typeof readdirSync;
+type StatSyncFn = typeof statSync;
+type WriteFn = (text: string) => void;
+
+interface CrapReportDependencies {
+  execFileSyncFn: ExecFileSyncFn;
+  readFileSyncFn: ReadFileSyncFn;
+  readdirSyncFn: ReaddirSyncFn;
+  statSyncFn: StatSyncFn;
+  write: WriteFn;
+}
+
+const defaultDependencies: CrapReportDependencies = {
+  execFileSyncFn: execFileSync,
+  readFileSyncFn: readFileSync,
+  readdirSyncFn: readdirSync,
+  statSyncFn: statSync,
+  write: (text) => {
+    process.stdout.write(text);
+  },
+};
+
+export function runCrapReport(
+  argv: string[],
+  dependencies: CrapReportDependencies = defaultDependencies,
+): void {
+  const options = parseArgs(argv, dependencies.execFileSyncFn);
   const coverage = JSON.parse(
-    readFileSync(COVERAGE_PATH, "utf8"),
+    dependencies.readFileSyncFn(COVERAGE_PATH, "utf8"),
   ) as CoverageReport;
-  const files = listSourceFiles(resolve(ROOT, "src"))
+  const files = listSourceFiles(
+    resolve(ROOT, "src"),
+    dependencies.readdirSyncFn,
+    dependencies.statSyncFn,
+  )
     .map((filePath) => relative(ROOT, filePath))
     .filter(isAnalyzableSourceFile);
 
@@ -39,7 +70,7 @@ function main(): void {
     const fileCoverage = findCoverageForFile(coverage, absolutePath, filePath);
     if (!fileCoverage) return [];
 
-    const sourceText = readFileSync(absolutePath, "utf8");
+    const sourceText = dependencies.readFileSyncFn(absolutePath, "utf8");
     return collectFunctionReports(filePath, sourceText, {
       path: filePath,
       statementMap: fileCoverage.statementMap,
@@ -54,7 +85,7 @@ function main(): void {
   const sorted = [...selectedReports].sort((a, b) => b.crap - a.crap);
 
   if (sorted.length === 0) {
-    process.stdout.write("No analyzable files selected for CRAP reporting.\n");
+    dependencies.write("No analyzable files selected for CRAP reporting.\n");
     return;
   }
 
@@ -70,7 +101,7 @@ function main(): void {
       ].join("\t"),
     )
     .join("\n");
-  process.stdout.write(
+  dependencies.write(
     ["file\tfunction\tline\tcomplexity\tcoverage\tcrap", rows, ""].join("\n"),
   );
 
@@ -90,7 +121,7 @@ function main(): void {
   }
 }
 
-function findCoverageForFile(
+export function findCoverageForFile(
   coverage: CoverageReport,
   absolutePath: string,
   relativePath: string,
@@ -102,15 +133,19 @@ function findCoverageForFile(
   );
 }
 
-function listSourceFiles(directory: string): string[] {
-  const entries = readdirSync(directory).sort();
+export function listSourceFiles(
+  directory: string,
+  readdirSyncFn: ReaddirSyncFn = readdirSync,
+  statSyncFn: StatSyncFn = statSync,
+): string[] {
+  const entries = readdirSyncFn(directory).sort();
   const files: string[] = [];
 
   for (const entry of entries) {
     const entryPath = join(directory, entry);
-    const stats = statSync(entryPath);
+    const stats = statSyncFn(entryPath);
     if (stats.isDirectory()) {
-      files.push(...listSourceFiles(entryPath));
+      files.push(...listSourceFiles(entryPath, readdirSyncFn, statSyncFn));
     } else {
       files.push(entryPath);
     }
@@ -119,7 +154,10 @@ function listSourceFiles(directory: string): string[] {
   return files;
 }
 
-function parseArgs(argv: string[]): {
+export function parseArgs(
+  argv: string[],
+  execFileSyncFn: ExecFileSyncFn = execFileSync,
+): {
   stagedFiles?: Set<string>;
   threshold?: number;
 } {
@@ -131,7 +169,7 @@ function parseArgs(argv: string[]): {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--staged") {
-      options.stagedFiles = getStagedFiles();
+      options.stagedFiles = getStagedFiles(execFileSyncFn);
     } else if (arg === "--threshold") {
       const next = argv[i + 1];
       if (next === undefined) {
@@ -145,8 +183,10 @@ function parseArgs(argv: string[]): {
   return options;
 }
 
-function getStagedFiles(): Set<string> {
-  const output = execFileSync(
+export function getStagedFiles(
+  execFileSyncFn: ExecFileSyncFn = execFileSync,
+): Set<string> {
+  const output = execFileSyncFn(
     "git",
     ["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
     { cwd: ROOT, encoding: "utf8" },
@@ -160,4 +200,10 @@ function getStagedFiles(): Set<string> {
   );
 }
 
-main();
+export function main(): void {
+  runCrapReport(process.argv.slice(2));
+}
+
+if (process.env["VITEST"] !== "true") {
+  main();
+}

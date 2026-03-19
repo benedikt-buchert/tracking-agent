@@ -222,6 +222,73 @@ describe("agent workflows", () => {
     ).toContain("Falling back to agent");
   });
 
+  it("does not save a playbook when replay recovery records no new steps", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
+      [
+        {
+          name: "browser_click",
+          execute: vi.fn().mockResolvedValue({ content: [{ text: "ok" }] }),
+        },
+      ] as never,
+    );
+
+    expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.savePlaybook).not.toHaveBeenCalled();
+  });
+
+  it("saves combined replay and recovery steps when optimization parsing fails", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+      rewriteText: "not valid json",
+      optimizedSteps: null,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
+      [
+        {
+          name: "browser_click",
+          execute: vi.fn().mockResolvedValue({ content: [{ text: "ok" }] }),
+        },
+      ] as never,
+    );
+
+    expect(mocks.savePlaybook).toHaveBeenCalledWith(
+      ".tracking-agent-playbook.json",
+      {
+        schemaUrl: "https://example.com/schema.json",
+        targetUrl: "https://example.com",
+        steps: [{ tool: "browser_click", args: { selector: "#recover" } }],
+      },
+    );
+    expect(
+      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
+    ).toContain("combined");
+  });
+
   it("records interactive steps and saves an optimized playbook", async () => {
     const optimizedSteps = [
       { tool: "browser_click", args: { selector: "#optimized" } },
@@ -258,6 +325,64 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
+  });
+
+  it("does not save a playbook for fresh runs when no action steps were recorded", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      recordedToolEvents: [],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.savePlaybook).not.toHaveBeenCalled();
+  });
+
+  it("saves raw recorded steps when optimization parsing fails in interactive mode", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#buy" } },
+      ],
+      rewriteText: "not valid json",
+      optimizedSteps: null,
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        {
+          eventName: "purchase",
+          schemaUrl: "https://example.com/purchase.json",
+        },
+      ],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.savePlaybook).toHaveBeenCalledWith(
+      ".tracking-agent-playbook.json",
+      {
+        schemaUrl: "https://example.com/schema.json",
+        targetUrl: "https://example.com",
+        steps: [{ tool: "browser_click", args: { selector: "#buy" } }],
+      },
+    );
+    expect(
+      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
+    ).toContain("raw");
   });
 
   it("resumes an existing session without saving a new playbook", async () => {

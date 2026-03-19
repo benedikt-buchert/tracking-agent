@@ -77,6 +77,14 @@ describe("extractRefs", () => {
     };
     expect(extractRefs(schema)).toEqual(["./valid.json"]);
   });
+
+  it("ignores non-object items inside branch arrays", () => {
+    const schema = {
+      oneOf: [null, "./purchase.json", 42, { $ref: "./valid.json" }],
+      anyOf: "not-an-array",
+    };
+    expect(extractRefs(schema)).toEqual(["./valid.json"]);
+  });
 });
 
 // ─── extractEventName ─────────────────────────────────────────────────────────
@@ -112,6 +120,21 @@ describe("extractEventName", () => {
       properties: { event: { const: "checkout", enum: ["checkout", "other"] } },
     };
     expect(extractEventName(schema)).toBe("checkout");
+  });
+
+  it("falls back to title when properties.event is not an object", () => {
+    const schema = {
+      properties: { event: "purchase" },
+      title: "PageView",
+    };
+    expect(extractEventName(schema)).toBe("PageView");
+  });
+
+  it("returns undefined when enum exists but the first value is not a string", () => {
+    const schema = {
+      properties: { event: { enum: [42, "purchase"] } },
+    };
+    expect(extractEventName(schema)).toBeUndefined();
   });
 });
 

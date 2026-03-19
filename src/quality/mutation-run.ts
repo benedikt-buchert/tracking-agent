@@ -8,22 +8,42 @@ interface MutationRunOptions {
   dryRunOnly: boolean;
 }
 
-function main(): void {
-  const options = parseArgs(process.argv.slice(2));
-  const targets = resolveTargets(options);
+type ExecFileSyncFn = typeof execFileSync;
+type WriteFn = (text: string) => void;
+
+interface MutationRunDependencies {
+  execFileSyncFn: ExecFileSyncFn;
+  write: WriteFn;
+}
+
+const defaultDependencies: MutationRunDependencies = {
+  execFileSyncFn: execFileSync,
+  write: (text) => {
+    process.stdout.write(text);
+  },
+};
+
+export function runMutationCommand(
+  argv: string[],
+  dependencies: MutationRunDependencies = defaultDependencies,
+): void {
+  const options = parseArgs(argv);
+  const targets = resolveTargets(options, dependencies.execFileSyncFn);
 
   if (targets.length === 0) {
-    process.stdout.write("No changed source files selected for mutation testing.\n");
+    dependencies.write(
+      "No changed source files selected for mutation testing.\n",
+    );
     return;
   }
 
   const args = buildStrykerArgs(targets, { dryRunOnly: options.dryRunOnly });
-  execFileSync("./node_modules/.bin/stryker", args, {
+  dependencies.execFileSyncFn("./node_modules/.bin/stryker", args, {
     stdio: "inherit",
   });
 }
 
-function parseArgs(argv: string[]): MutationRunOptions {
+export function parseArgs(argv: string[]): MutationRunOptions {
   const options: MutationRunOptions = {
     staged: false,
     dryRunOnly: false,
@@ -48,28 +68,46 @@ function parseArgs(argv: string[]): MutationRunOptions {
   return options;
 }
 
-function resolveTargets(options: MutationRunOptions): string[] {
+export function resolveTargets(
+  options: MutationRunOptions,
+  execFileSyncFn: ExecFileSyncFn = execFileSync,
+): string[] {
   if (options.baseRef !== undefined) {
     const headRef = options.headRef ?? "HEAD";
     return selectMutationTargets(
-      gitOutput(["diff", "--name-only", `${options.baseRef}...${headRef}`]),
+      gitOutput(
+        ["diff", "--name-only", `${options.baseRef}...${headRef}`],
+        execFileSyncFn,
+      ),
     );
   }
 
   if (options.staged) {
     return selectMutationTargets(
-      gitOutput(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]),
+      gitOutput(
+        ["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        execFileSyncFn,
+      ),
     );
   }
 
   return [];
 }
 
-function gitOutput(args: string[]): string[] {
-  return execFileSync("git", args, { encoding: "utf8" })
+export function gitOutput(
+  args: string[],
+  execFileSyncFn: ExecFileSyncFn = execFileSync,
+): string[] {
+  return execFileSyncFn("git", args, { encoding: "utf8" })
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 }
 
-main();
+export function main(): void {
+  runMutationCommand(process.argv.slice(2));
+}
+
+if (process.env["VITEST"] !== "true") {
+  main();
+}

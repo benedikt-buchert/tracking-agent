@@ -23,16 +23,18 @@ export function extractRefs(schema: unknown): string[] {
   const obj = schema as Record<string, unknown>;
   const refs: string[] = [];
   for (const key of ["oneOf", "anyOf", "allOf"] as const) {
-    const arr = obj[key];
-    if (!Array.isArray(arr)) continue;
-    for (const item of arr) {
-      if (item !== null && typeof item === "object") {
-        const ref = (item as Record<string, unknown>)["$ref"];
-        if (typeof ref === "string") {
-          refs.push(ref);
-        }
-      }
-    }
+    refs.push(...extractRefList(obj[key]));
+  }
+  return refs;
+}
+
+function extractRefList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const refs: string[] = [];
+  for (const item of value) {
+    const ref = getStringProperty(item, "$ref");
+    if (ref !== undefined) refs.push(ref);
   }
   return refs;
 }
@@ -40,31 +42,7 @@ export function extractRefs(schema: unknown): string[] {
 export function extractEventName(schema: unknown): string | undefined {
   if (schema === null || typeof schema !== "object") return undefined;
   const obj = schema as Record<string, unknown>;
-
-  // 1. properties.event.const
-  const props = obj["properties"];
-  if (props !== null && typeof props === "object") {
-    const propsObj = props as Record<string, unknown>;
-    const eventProp = propsObj["event"];
-    if (eventProp !== null && typeof eventProp === "object") {
-      const eventObj = eventProp as Record<string, unknown>;
-      if (typeof eventObj["const"] === "string") {
-        return eventObj["const"];
-      }
-      // 2. properties.event.enum[0]
-      const enumVal = eventObj["enum"];
-      if (Array.isArray(enumVal) && typeof enumVal[0] === "string") {
-        return enumVal[0] as string;
-      }
-    }
-  }
-
-  // 3. title
-  if (typeof obj["title"] === "string") {
-    return obj["title"];
-  }
-
-  return undefined;
+  return extractEventNameFromProperties(obj) ?? getStringProperty(obj, "title");
 }
 
 export function extractDescription(schema: unknown): string | undefined {
@@ -81,6 +59,33 @@ export function extractCanonicalUrl(schema: unknown): string | undefined {
   if (schemaField === null || typeof schemaField !== "object") return undefined;
   const constVal = (schemaField as Record<string, unknown>)["const"];
   return typeof constVal === "string" ? constVal : undefined;
+}
+
+function extractEventNameFromProperties(
+  schema: Record<string, unknown>,
+): string | undefined {
+  const props = schema["properties"];
+  if (props === null || typeof props !== "object") return undefined;
+
+  const eventProp = (props as Record<string, unknown>)["event"];
+  if (eventProp === null || typeof eventProp !== "object") return undefined;
+
+  const eventObj = eventProp as Record<string, unknown>;
+  return (
+    getStringProperty(eventObj, "const") ?? getFirstString(eventObj["enum"])
+  );
+}
+
+function getStringProperty(value: unknown, key: string): string | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const property = (value as Record<string, unknown>)[key];
+  return typeof property === "string" ? property : undefined;
+}
+
+function getFirstString(value: unknown): string | undefined {
+  return Array.isArray(value) && typeof value[0] === "string"
+    ? (value[0] as string)
+    : undefined;
 }
 
 export function extractTrackingTargets(schema: unknown): string[] {

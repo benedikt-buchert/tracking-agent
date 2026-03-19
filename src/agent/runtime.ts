@@ -41,37 +41,11 @@ function hasVertexAdcCredentials(): boolean {
   );
 }
 
-export function checkApiKey(): void {
-  const provider = process.env["MODEL_PROVIDER"] ?? "anthropic";
+function getProvider(): string {
+  return process.env["MODEL_PROVIDER"] ?? "anthropic";
+}
 
-  if (provider === "google-vertex") {
-    const hasCredentials = process.env["GOOGLE_CLOUD_API_KEY"]
-      ? true
-      : hasVertexAdcCredentials();
-    const hasProject = !!(
-      process.env["GOOGLE_CLOUD_PROJECT"] ?? process.env["GCLOUD_PROJECT"]
-    );
-    const hasLocation = !!process.env["GOOGLE_CLOUD_LOCATION"];
-    if (hasCredentials && hasProject && hasLocation) return;
-
-    const missing: string[] = [];
-    if (!hasProject) missing.push("GOOGLE_CLOUD_PROJECT");
-    if (!hasLocation) missing.push("GOOGLE_CLOUD_LOCATION");
-    throw new ConfigurationError(
-      chalk.red(`\n✖ Google Vertex AI is not fully configured.\n`) +
-        (missing.length > 0
-          ? chalk.dim(`  Missing env vars: ${missing.join(", ")}\n`)
-          : chalk.dim(`  ADC credentials not found.\n`)) +
-        chalk.dim(`  Run: gcloud auth application-default login\n`) +
-        chalk.dim(
-          `  Then set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION in your .env\n\n`,
-        ),
-    );
-  }
-
-  const key = getEnvApiKey(provider);
-  if (key) return;
-
+function getMissingApiKeyVar(provider: string): string {
   const keyVarMap: Record<string, string> = {
     openai: "OPENAI_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",
@@ -79,13 +53,60 @@ export function checkApiKey(): void {
     groq: "GROQ_API_KEY",
     xai: "XAI_API_KEY",
   };
-  const keyVar =
+
+  return (
     keyVarMap[provider] ??
-    `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+    `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`
+  );
+}
+
+function ensureVertexConfiguration(): void {
+  const hasCredentials = process.env["GOOGLE_CLOUD_API_KEY"]
+    ? true
+    : hasVertexAdcCredentials();
+  const hasProject = !!(
+    process.env["GOOGLE_CLOUD_PROJECT"] ?? process.env["GCLOUD_PROJECT"]
+  );
+  const hasLocation = !!process.env["GOOGLE_CLOUD_LOCATION"];
+  if (hasCredentials && hasProject && hasLocation) return;
+
+  const missing: string[] = [];
+  if (!hasProject) missing.push("GOOGLE_CLOUD_PROJECT");
+  if (!hasLocation) missing.push("GOOGLE_CLOUD_LOCATION");
+
+  const detail =
+    missing.length > 0
+      ? chalk.dim(`  Missing env vars: ${missing.join(", ")}\n`)
+      : chalk.dim(`  ADC credentials not found.\n`);
+
+  throw new ConfigurationError(
+    chalk.red(`\n✖ Google Vertex AI is not fully configured.\n`) +
+      detail +
+      chalk.dim(`  Run: gcloud auth application-default login\n`) +
+      chalk.dim(
+        `  Then set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION in your .env\n\n`,
+      ),
+  );
+}
+
+function ensureProviderApiKey(provider: string): void {
+  const key = getEnvApiKey(provider);
+  if (key) return;
+
+  const keyVar = getMissingApiKeyVar(provider);
   throw new ConfigurationError(
     chalk.red(`\n✖ Missing ${keyVar} environment variable.\n`) +
       chalk.dim(`  Set it in your shell or in a .env file.\n\n`),
   );
+}
+
+export function checkApiKey(): void {
+  const provider = getProvider();
+  if (provider === "google-vertex") {
+    ensureVertexConfiguration();
+    return;
+  }
+  ensureProviderApiKey(provider);
 }
 
 export function createAgent(purpose = "agent-assisted exploration"): Agent {
