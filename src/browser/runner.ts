@@ -2,9 +2,13 @@ import { execFile } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import type { EventSchema } from "../schema.js";
+import {
+  validateEvent,
+  defaultLoadSchema,
+} from "../validation/index.js";
+import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
 
-export const VALIDATOR_BASE_URL =
-  process.env.VALIDATOR_URL ?? "http://localhost:3000";
+export type { ValidationResult };
 export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
 const seenPageBoundaryWarnings = new Set<string>();
 
@@ -136,11 +140,6 @@ export async function getCurrentUrl(
   return out.trim().replace(/^"|"$/g, "");
 }
 
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
-
 export interface EventValidationResult {
   index: number;
   event: unknown;
@@ -171,100 +170,13 @@ export function resolveSchemaForEvent(
   };
 }
 
-// ─── formatAjvError ───────────────────────────────────────────────────────────
-
-function extractAjvErrorFields(e: Record<string, unknown>): {
-  instancePath: string;
-  keyword: string;
-  params: Record<string, unknown>;
-  message: string;
-} {
-  return {
-    instancePath:
-      typeof e["instancePath"] === "string" ? e["instancePath"] : "",
-    keyword: typeof e["keyword"] === "string" ? e["keyword"] : "",
-    params:
-      e["params"] !== null && typeof e["params"] === "object"
-        ? (e["params"] as Record<string, unknown>)
-        : {},
-    message: typeof e["message"] === "string" ? e["message"] : "",
-  };
-}
-
-export function formatAjvError(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e === null || typeof e !== "object") return JSON.stringify(e);
-
-  const { instancePath, keyword, params, message } = extractAjvErrorFields(
-    e as Record<string, unknown>,
-  );
-  const prefix = instancePath ? `${instancePath} ` : "";
-  return (
-    formatAjvKeywordError(keyword, params, prefix) ??
-    (message ? `${prefix}${message}` : JSON.stringify(e))
-  );
-}
-
-function formatAjvKeywordError(
-  keyword: string,
-  params: Record<string, unknown>,
-  prefix: string,
-): string | undefined {
-  if (keyword === "const") {
-    const allowedValue = params["allowedValue"];
-    if (allowedValue !== undefined) {
-      return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
-    }
-    return undefined;
-  }
-
-  if (keyword === "required") {
-    const missingProperty = params["missingProperty"];
-    return typeof missingProperty === "string"
-      ? `Missing required property: ${missingProperty}`
-      : undefined;
-  }
-
-  if (keyword === "additionalProperties") {
-    const additionalProperty = params["additionalProperty"];
-    return typeof additionalProperty === "string"
-      ? `Unexpected property: ${additionalProperty}`
-      : undefined;
-  }
-
-  return undefined;
-}
-
-// ─── validateEvent ────────────────────────────────────────────────────────────
-
-export async function validateEvent(
-  event: unknown,
-  schemaUrl: string,
-  fetchFn: typeof fetch = fetch,
-): Promise<ValidationResult> {
-  try {
-    const url = `${VALIDATOR_BASE_URL}/v1/validate/remote?schema_url=${encodeURIComponent(schemaUrl)}`;
-    const res = await fetchFn(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(event),
-    });
-    const json = (await res.json()) as { valid: boolean; errors: unknown[] };
-    const errors = (json.errors ?? []).map(formatAjvError);
-    return { valid: json.valid, errors };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { valid: false, errors: [`Validator unreachable: ${msg}`] };
-  }
-}
-
 // ─── validateAll ──────────────────────────────────────────────────────────────
 
 export async function validateAll(
   events: unknown[],
   eventSchemas: EventSchema[],
   entryUrl: string,
-  fetchFn: typeof fetch = fetch,
+  loadSchemaFn: LoadSchemaFn = defaultLoadSchema,
 ): Promise<EventValidationResult[]> {
   const results: EventValidationResult[] = [];
   for (let i = 0; i < events.length; i++) {
@@ -276,7 +188,7 @@ export async function validateAll(
     );
     // Only validate events that match a known schema — skip GTM internals and unrecognised events
     if (schemaUrl === entryUrl) continue;
-    const result = await validateEvent(event, schemaUrl, fetchFn);
+    const result = await validateEvent(event, schemaUrl, loadSchemaFn);
     results.push({ index: i, event, eventName, schemaUrl, result });
   }
   return results;

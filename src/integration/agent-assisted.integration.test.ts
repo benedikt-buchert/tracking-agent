@@ -1,3 +1,4 @@
+import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgent } from "../agent/runtime.js";
 import { buildInitialPrompt } from "../agent/prompts.js";
@@ -9,6 +10,7 @@ import {
   replayPlaybook,
   validateAll,
 } from "../browser/runner.js";
+import { createLocalFirstLoader } from "../validation/index.js";
 import { discoverEventSchemas } from "../schema.js";
 import {
   SCHEMA_URL,
@@ -24,61 +26,13 @@ const shouldRun =
     !!process.env["XAI_API_KEY"] ||
     !!process.env["GROQ_API_KEY"]);
 
-function integrationValidatorFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-) {
-  const url = String(input);
-  const schemaUrl = new URL(url).searchParams.get("schema_url") ?? "";
-  const event = JSON.parse(String(init?.body ?? "{}")) as Record<
-    string,
-    unknown
-  >;
-
-  let valid = false;
-  let errors: string[] = [];
-
-  if (schemaUrl.endsWith("/purchase-event.json")) {
-    const ecommerce = event["ecommerce"] as Record<string, unknown> | undefined;
-    const item = Array.isArray(ecommerce?.["items"])
-      ? (ecommerce["items"][0] as Record<string, unknown> | undefined)
-      : undefined;
-    valid =
-      typeof ecommerce?.["transaction_id"] === "string" &&
-      typeof ecommerce?.["value"] === "number" &&
-      typeof ecommerce?.["currency"] === "string" &&
-      typeof item?.["item_id"] === "string";
-    errors = valid ? [] : ["Missing or invalid purchase fields"];
-  } else if (schemaUrl.endsWith("/add-to-cart-event.json")) {
-    const ecommerce = event["ecommerce"] as Record<string, unknown> | undefined;
-    const item = Array.isArray(ecommerce?.["items"])
-      ? (ecommerce["items"][0] as Record<string, unknown> | undefined)
-      : undefined;
-    valid =
-      typeof ecommerce?.["currency"] === "string" &&
-      typeof item?.["item_id"] === "string" &&
-      typeof item?.["quantity"] !== "string";
-    errors = valid ? [] : ["Invalid ecommerce item payload"];
-  } else if (schemaUrl.endsWith("/complex-event.json")) {
-    valid =
-      typeof event["number_constraints"] === "number" &&
-      Number(event["number_constraints"]) % 5 === 0 &&
-      typeof event["string_constraints"] === "string" &&
-      /^[a-z]+$/.test(String(event["string_constraints"]));
-    errors = valid ? [] : ["Complex event constraints failed"];
-  } else if (schemaUrl.endsWith("/conditional-event.json")) {
-    valid =
-      event["country"] === "US" &&
-      typeof event["postal_code"] === "string" &&
-      /^[0-9]{5}$/.test(String(event["postal_code"]));
-    errors = valid ? [] : ["Postal code does not match country"];
-  }
-
-  return Promise.resolve({
-    ok: true,
-    json: async () => ({ valid, errors }),
-  } as Response);
-}
+const FIXTURES_SCHEMAS_DIR = join(
+  import.meta.dirname,
+  "fixtures",
+  "schemas",
+  "1.3.0",
+);
+const loadSchemaFn = createLocalFirstLoader(FIXTURES_SCHEMAS_DIR);
 
 describe.skipIf(!shouldRun)("agent-assisted integration fixture", () => {
   const closers: Array<() => Promise<void>> = [];
@@ -145,7 +99,7 @@ describe.skipIf(!shouldRun)("agent-assisted integration fixture", () => {
         observedEvents,
         eventSchemas,
         SCHEMA_URL,
-        integrationValidatorFetch as typeof fetch,
+        loadSchemaFn,
       );
 
       const observedEventNames = new Set(

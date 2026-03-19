@@ -2,16 +2,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import { clearValidatorCache } from "../validation/index.js";
 import {
   runAgentBrowser,
   runBrowserEval,
   parseBrowserJsonArray,
   getCurrentUrl,
   resolveSchemaForEvent,
-  validateEvent,
   validateAll,
   generateReport,
-  formatAjvError,
   navigateTo,
   captureDataLayer,
   drainInterceptor,
@@ -84,262 +83,22 @@ describe("resolveSchemaForEvent", () => {
   });
 });
 
-// ─── formatAjvError ───────────────────────────────────────────────────────────
-
-describe("formatAjvError", () => {
-  it("formats const errors as: <path> must equal <value>", () => {
-    expect(
-      formatAjvError({
-        instancePath: "/event",
-        keyword: "const",
-        params: { allowedValue: "purchase" },
-        message: "must be equal to constant",
-      }),
-    ).toBe('/event must equal "purchase"');
-  });
-
-  it("formats required errors as: Missing required property: <name>", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "required",
-        params: { missingProperty: "transactionId" },
-        message: "must have required property 'transactionId'",
-      }),
-    ).toBe("Missing required property: transactionId");
-  });
-
-  it("formats additionalProperties errors as: Unexpected property: <name>", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "additionalProperties",
-        params: { additionalProperty: "typo_field" },
-        message: "must NOT have additional properties",
-      }),
-    ).toBe("Unexpected property: typo_field");
-  });
-
-  it("prepends instancePath for type and other errors", () => {
-    expect(
-      formatAjvError({
-        instancePath: "/items/0/price",
-        keyword: "type",
-        params: { type: "number" },
-        message: "must be number",
-      }),
-    ).toBe("/items/0/price must be number");
-  });
-
-  it("returns message as-is when instancePath is empty and keyword is unrecognised", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "minimum",
-        params: { limit: 0 },
-        message: "must be >= 0",
-      }),
-    ).toBe("must be >= 0");
-  });
-
-  it("passes through plain string errors unchanged", () => {
-    expect(formatAjvError("something went wrong")).toBe("something went wrong");
-  });
-
-  it("falls back to JSON.stringify for unknown non-string values", () => {
-    expect(formatAjvError({ weird: true })).toBe('{"weird":true}');
-  });
-
-  it("stringifies null and primitive values", () => {
-    expect(formatAjvError(null)).toBe("null");
-    expect(formatAjvError(42)).toBe("42");
-    expect(formatAjvError(false)).toBe("false");
-  });
-
-  it("falls back to JSON.stringify when a structured error has no usable message", () => {
-    expect(
-      formatAjvError({
-        instancePath: "/event",
-        keyword: "const",
-        params: {},
-      }),
-    ).toBe('{"instancePath":"/event","keyword":"const","params":{}}');
-  });
-
-  it("falls back to the raw message when required params are malformed", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "required",
-        params: { missingProperty: 42 },
-        message: "must have required property",
-      }),
-    ).toBe("must have required property");
-  });
-
-  it("falls back to the raw message when additionalProperties params are malformed", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "additionalProperties",
-        params: { additionalProperty: 42 },
-        message: "must NOT have additional properties",
-      }),
-    ).toBe("must NOT have additional properties");
-  });
-
-  it("uses an empty prefix when instancePath is not a string", () => {
-    expect(
-      formatAjvError({
-        instancePath: 42,
-        keyword: "minimum",
-        params: {},
-        message: "must be >= 0",
-      }),
-    ).toBe("must be >= 0");
-  });
-
-  it("falls back to message when params is null", () => {
-    expect(
-      formatAjvError({
-        instancePath: "",
-        keyword: "const",
-        params: null,
-        message: "must be equal to constant",
-      }),
-    ).toBe("must be equal to constant");
-  });
-});
-
-// ─── validateEvent ────────────────────────────────────────────────────────────
-
-describe("validateEvent", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("returns valid:true when the validator responds with valid", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as Response);
-
-    const result = await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-    expect(result.valid).toBe(true);
-    expect(result.errors).toEqual([]);
-  });
-
-  it("returns valid:false with errors when the validator responds with invalid", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        valid: false,
-        errors: ["Missing required field: transactionId"],
-      }),
-    } as Response);
-
-    const result = await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContain("Missing required field: transactionId");
-  });
-
-  it("formats ajv error objects into actionable messages", async () => {
-    const ajvErrors = [
-      {
-        instancePath: "/event",
-        keyword: "const",
-        params: { allowedValue: "purchase" },
-        message: "must be equal to constant",
-      },
-      {
-        instancePath: "",
-        keyword: "required",
-        params: { missingProperty: "transactionId" },
-        message: "must have required property 'transactionId'",
-      },
-    ];
-    vi.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: false, errors: ajvErrors }),
-    } as Response);
-
-    const result = await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-    expect(result.errors).toEqual([
-      '/event must equal "purchase"',
-      "Missing required property: transactionId",
-    ]);
-  });
-
-  it("returns valid:false with an error message when the validator is unreachable", async () => {
-    vi.spyOn(global, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
-
-    const result = await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-    expect(result.valid).toBe(false);
-    expect(result.errors[0]).toMatch(/validator.*unreachable|ECONNREFUSED/i);
-  });
-
-  it("stringifies non-Error thrown values from the validator", async () => {
-    vi.spyOn(global, "fetch").mockRejectedValueOnce("network down");
-
-    const result = await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-    expect(result).toEqual({
-      valid: false,
-      errors: ["Validator unreachable: network down"],
-    });
-  });
-
-  it("sends the schema URL as a query param and does not inject $schema into the event body", async () => {
-    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as Response);
-
-    await validateEvent(
-      { event: "purchase" },
-      "https://example.com/purchase.json",
-    );
-
-    const url = fetchSpy.mock.calls[0][0] as string;
-    expect(url).toContain("schema_url=");
-    expect(url).toContain(
-      encodeURIComponent("https://example.com/purchase.json"),
-    );
-    const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
-    expect(body.$schema).toBeUndefined();
-  });
-});
-
 // ─── validateAll ──────────────────────────────────────────────────────────────
 
 describe("validateAll", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => clearValidatorCache());
+
+  const permissiveSchema = { type: "object" };
+  const restrictiveSchema = { type: "object", required: ["_never_present_"] };
 
   it("validates each event and returns a result per event", async () => {
-    vi.spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ valid: true, errors: [] }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ valid: false, errors: ["bad"] }),
-      } as Response);
+    const loadSchemaFn = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("purchase.json")) return permissiveSchema;
+      return restrictiveSchema;
+    });
 
     const events = [{ event: "purchase" }, { event: "add_to_cart" }];
-    const results = await validateAll(events, schemas, ENTRY_URL);
+    const results = await validateAll(events, schemas, ENTRY_URL, loadSchemaFn);
 
     expect(results).toHaveLength(2);
     expect(results[0].index).toBe(0);
@@ -351,35 +110,28 @@ describe("validateAll", () => {
   });
 
   it("skips events with no schema match (GTM internals, unknown events)", async () => {
-    const fetchSpy = vi.spyOn(global, "fetch");
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as Response);
+    const loadSchemaFn = vi.fn().mockResolvedValue(permissiveSchema);
 
     const events = [
       { event: "gtm.js" }, // no schema match — skip
       { event: "gtm.dom" }, // no schema match — skip
       { event: "purchase" }, // known schema — validate
     ];
-    const results = await validateAll(events, schemas, ENTRY_URL);
+    const results = await validateAll(events, schemas, ENTRY_URL, loadSchemaFn);
 
     expect(results).toHaveLength(1);
     expect(results[0].eventName).toBe("purchase");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(loadSchemaFn).toHaveBeenCalledTimes(1);
   });
 
   it("skips events with no event field", async () => {
-    const fetchSpy = vi.spyOn(global, "fetch");
-    fetchSpy.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as Response);
+    const loadSchemaFn = vi.fn().mockResolvedValue(permissiveSchema);
 
     const results = await validateAll(
       [{ someOtherField: "value" }, { event: "purchase" }],
       schemas,
       ENTRY_URL,
+      loadSchemaFn,
     );
     expect(results).toHaveLength(1);
     expect(results[0].eventName).toBe("purchase");
@@ -391,15 +143,13 @@ describe("validateAll", () => {
   });
 
   it("preserves original event indexes when skipped events appear earlier", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ valid: true, errors: [] }),
-    } as Response);
+    const loadSchemaFn = vi.fn().mockResolvedValue(permissiveSchema);
 
     const results = await validateAll(
       [{ event: "gtm.js" }, { event: "purchase" }],
       schemas,
       ENTRY_URL,
+      loadSchemaFn,
     );
     expect(results).toHaveLength(1);
     expect(results[0]?.index).toBe(1);

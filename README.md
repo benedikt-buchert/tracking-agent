@@ -36,12 +36,14 @@ tracking-agent --schema <url> --url <url> [options]
 
 | Option | Description |
 |--------|-------------|
-| `--schema` | URL of the JSON Schema to validate against |
+| `--schema` | HTTP URL or local file path of the JSON Schema to validate against |
 | `--url` | URL of the website to test |
 | `--resume` | Resume a previous session from `.tracking-agent-session.json` |
 | `--replay` | Replay recorded steps from `.tracking-agent-playbook.json` (LLM fallback on failure) |
 | `--headless` | Run the browser in the background (no visible window) |
 | `--help` | Show the help message |
+
+Validation runs locally using [AJV](https://ajv.js.org/). No external validator service is required. Schemas are fetched directly from the `--schema` URL (HTTP or local file) and validated in-process. Cross-referenced `$ref` schemas are resolved the same way.
 
 ## Environment variables
 

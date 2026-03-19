@@ -547,6 +547,54 @@ describe("createFindTool", () => {
     });
     expect(browserFn).toHaveBeenCalledWith(["find", "label", "Email", "fill"]);
   });
+
+  it("falls back to 'Done' when testid click returns empty text", async () => {
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "", capturedEvents: [] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("Done");
+  });
+
+  it("sets timingRiskWarning true when testid click captures events", async () => {
+    const event = { event: "add_to_cart" };
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "✓ Done", capturedEvents: [event] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect(result.details["timingRiskWarning"]).toBe(true);
+    expect(result.details["capturedEvents"]).toEqual([event]);
+  });
+
+  it("sets timingRiskWarning false when testid click captures no events", async () => {
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "✓ Done", capturedEvents: [] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect(result.details["timingRiskWarning"]).toBe(false);
+  });
+
+  it("returns the raw JSON primitive string when browser eval returns a JSON number", async () => {
+    const tool = createFindTool(mockBrowser("42"));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("42");
+  });
 });
 
 describe("findTool", () => {
