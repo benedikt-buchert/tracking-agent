@@ -22,6 +22,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: actions/cache@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-pr-${{ github.base_ref }}-${{ hashFiles('package-lock.json', 'stryker.config.json') }}
+          restore-keys: |
+            mutation-pr-${{ github.base_ref }}-
+            mutation-main-
+
       - run: npm ci
       - run: node --import tsx src/quality/mutation-run.ts --base origin/${{ github.base_ref }} --head HEAD
 
@@ -37,5 +45,13 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: actions/cache@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-main-${{ github.ref_name }}-${{ hashFiles('package-lock.json', 'stryker.config.json') }}
+          restore-keys: |
+            mutation-main-${{ github.ref_name }}-
+            mutation-main-
+
       - run: npm ci
-      - run: npm run test:mutation -- --coverageAnalysis off --concurrency 1
+      - run: npm run test:mutation

@@ -35,6 +35,7 @@ describe("project verification config", () => {
     };
 
     expect(pkg.scripts?.["test:mutation"]).toBe("stryker run");
+    expect(pkg.scripts?.["test:mutation:file"]).toBe("stryker run --mutate");
     expect(pkg.scripts?.["test:mutation:changed"]).toBe(
       "node --import tsx src/quality/mutation-run.ts --staged",
     );
@@ -54,12 +55,18 @@ describe("project verification config", () => {
       testRunner?: string;
       checkers?: string[];
       tsconfigFile?: string;
+      incremental?: boolean;
+      incrementalFile?: string;
+      coverageAnalysis?: string;
     };
 
     expect(config.testRunner).toBe("vitest");
     expect(config.checkers).toEqual(["typescript"]);
     expect(config.tsconfigFile).toBe("tsconfig.json");
     expect(config.mutate).toEqual(["src/**/*.ts", "!src/**/*.test.ts"]);
+    expect(config.incremental).toBe(true);
+    expect(config.incrementalFile).toBe("reports/stryker-incremental.json");
+    expect(config.coverageAnalysis).toBe("perTest");
   });
 
   it("defines coverage and CRAP-report scripts", () => {
@@ -101,5 +108,7 @@ describe("project verification config", () => {
     const mutationWorkflow = readFileSync(mutationWorkflowPath, "utf8");
     expect(mutationWorkflow).toContain("src/quality/mutation-run.ts --base");
     expect(mutationWorkflow).toContain("npm run test:mutation");
+    expect(mutationWorkflow).toContain("reports/stryker-incremental.json");
+    expect(mutationWorkflow).toContain("actions/cache");
   });
 });

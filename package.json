@@ -17,6 +17,7 @@
     "test:crap": "npm run test:coverage && node --import tsx src/quality/crap-report.ts",
     "test:watch": "vitest",
     "test:mutation": "stryker run",
+    "test:mutation:file": "stryker run --mutate",
     "test:mutation:changed": "node --import tsx src/quality/mutation-run.ts --staged",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

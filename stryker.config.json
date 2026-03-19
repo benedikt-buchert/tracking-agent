@@ -4,6 +4,9 @@
   "checkers": ["typescript"],
   "tsconfigFile": "tsconfig.json",
   "mutate": ["src/**/*.ts", "!src/**/*.test.ts"],
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json",
+  "coverageAnalysis": "perTest",
   "reporters": ["json"],
   "typescriptChecker": {
     "prioritizePerformanceOverAccuracy": true
