@@ -363,6 +363,25 @@ describe("buildAgentTools", () => {
     expect(builtEval).toBe(originalEval);
   });
 
+  it("wraps all polled tool names (browser_navigate, browser_fill, browser_find, browser_wait, request_human_input)", () => {
+    // Kills StringLiteral mutations on POLLED_TOOL_NAMES entries
+    const { tools } = buildAgentTools([], false);
+    const polledNames = [
+      "browser_navigate",
+      "browser_fill",
+      "browser_find",
+      "browser_wait",
+      "request_human_input",
+    ];
+    for (const name of polledNames) {
+      const original = allTools.find((t) => t.name === name);
+      const built = tools.find((t) => t.name === name);
+      expect(built).toBeDefined();
+      expect(original).toBeDefined();
+      expect(built).not.toBe(original);
+    }
+  });
+
   it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {
     const { tools } = buildAgentTools([], true);
     const hitTool = tools.find((t) => t.name === "request_human_input")!;

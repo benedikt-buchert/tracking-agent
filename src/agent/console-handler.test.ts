@@ -338,11 +338,56 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).toContain("platform.openai.com/settings/billing");
   });
 
+  it("uses the Anthropic billing URL when no MODEL_PROVIDER is set", () => {
+    // Kills ConditionalExpression "true" on getBillingUrl (always openai)
+    const err: string[] = [];
+    delete process.env["MODEL_PROVIDER"];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("credit balance is too low"));
+    expect(err.join("")).toContain("console.anthropic.com");
+    expect(err.join("")).not.toContain("openai");
+  });
+
   it("does not add a billing hint for generic non-billing errors", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).not.toContain("Hint: Add credits");
+  });
+
+  it("billing hint contains Hint text for credit errors", () => {
+    // Kills ConditionalExpression "false" (hint always empty) on getBillingHint
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("credit balance is too low"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("billing hint is shown when error contains only billing keyword", () => {
+    // Kills LogicalOperator || → && on getBillingHint (billing alone must be enough)
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("rate limit exceeded due to billing issue"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("billing hint is shown when error contains only quota keyword", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("quota exceeded for this month"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("does not write error on turn_end with non-error stopReason", () => {
+    // Kills ConditionalExpression "true" on the turn_end stopReason==="error" guard
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "turn_end",
+      message: { ...stubMsg, stopReason: "stop" as const },
+      toolResults: [],
+    });
+    expect(err).toHaveLength(0);
   });
 
   it("surfaces generic API errors clearly", () => {
