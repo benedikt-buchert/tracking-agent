@@ -1205,6 +1205,43 @@ describe("extractPlaybookSteps", () => {
 // ─── drainInterceptor ─────────────────────────────────────────────────────────
 
 describe("drainInterceptor", () => {
+  it("recovers persisted page-boundary events and warns with event names", async () => {
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ event: "purchase" }],
+        recoveredCount: 1,
+      }),
+    ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const result = await drainInterceptor(browserFn);
+
+    expect(result).toEqual([{ event: "purchase" }]);
+    expect(writeSpy).toHaveBeenCalledWith(
+      expect.stringContaining("page navigation boundary"),
+    );
+    expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining("purchase"));
+  });
+
+  it("warns only once for the same recovered page-boundary batch", async () => {
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ event: "purchase" }],
+        recoveredCount: 1,
+      }),
+    ) as unknown as BrowserFn;
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    await drainInterceptor(browserFn);
+    await drainInterceptor(browserFn);
+
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("returns parsed events from the browser eval result", async () => {
     const events = [{ event: "page_view" }, { event: "purchase" }];
     const browserFn = vi
@@ -1250,6 +1287,7 @@ describe("drainInterceptor", () => {
     const call = vi.mocked(browserFn).mock.calls[0][0];
     expect(call).toEqual(["eval", expect.stringContaining("__dl_intercepted")]);
     expect(call[1]).toContain("__dl_buffer");
+    expect(call[1]).toContain("sessionStorage");
   });
 });
 

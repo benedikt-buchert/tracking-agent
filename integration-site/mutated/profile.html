@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mutated Fixture: Profile</title>
+        <style>
+            body {
+                font-family: Georgia, serif;
+                margin: 0;
+                padding: 2rem;
+                background: linear-gradient(180deg, #f0f6ff, #ffffff);
+                color: #122033;
+            }
+            .shell {
+                max-width: 56rem;
+                margin: 0 auto;
+                display: grid;
+                gap: 1rem;
+            }
+            .panel {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #c9d7ea;
+                border-radius: 1.25rem;
+                padding: 1rem;
+            }
+            button {
+                border: 0;
+                border-radius: 0.9rem;
+                padding: 0.9rem 1rem;
+                background: #9b4d36;
+                color: white;
+                cursor: pointer;
+                font: inherit;
+            }
+            pre {
+                background: #102132;
+                color: #dcefff;
+                padding: 1rem;
+                border-radius: 0.75rem;
+                min-height: 8rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body data-data-layer-mode="rehydrate">
+        <div class="shell">
+            <div class="panel">
+                <h1>Account pulse</h1>
+            </div>
+
+            <div class="panel">
+                <div id="profile-actions">Loading account actions...</div>
+            </div>
+
+            <div class="panel">
+                <h2>Persisted dataLayer state</h2>
+                <pre id="events-view">[]</pre>
+            </div>
+        </div>
+
+        <script src="/shared/fixture-store.js"></script>
+        <script>
+            const store = window.fixtureStore;
+            store.bootPage({ viewSelector: "#events-view" });
+
+            store.mountAfterDelay(
+                "#profile-actions",
+                `
+          <button data-testid="account-pulse" type="button">
+            Emit user update
+          </button>
+        `,
+                250,
+            );
+
+            setTimeout(() => {
+                document
+                    .querySelector('[data-testid="account-pulse"]')
+                    .addEventListener("click", () => {
+                        store.pushEvent(
+                            {
+                                $schema:
+                                    "https://tracking-docs-demo.buchert.digital/schemas/web/complex-event.json",
+                                event: "user_update",
+                                number_constraints: 12,
+                                string_constraints: "BAD_HOST!",
+                                user_data: {
+                                    user_id: "U-200",
+                                    attributes: {
+                                        segment: "beta",
+                                        score: 87,
+                                    },
+                                },
+                            },
+                            "#events-view",
+                        );
+                    });
+            }, 250);
+        </script>
+    </body>
+</html>

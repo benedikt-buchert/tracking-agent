@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mutated Fixture: Transit</title>
+        <style>
+            body {
+                font-family: Georgia, serif;
+                margin: 0;
+                padding: 2rem;
+                background: linear-gradient(180deg, #f0f6ff, #ffffff);
+                color: #122033;
+            }
+            .shell {
+                max-width: 56rem;
+                margin: 0 auto;
+                display: grid;
+                gap: 1rem;
+            }
+            .panel {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #c9d7ea;
+                border-radius: 1.25rem;
+                padding: 1rem;
+            }
+            pre {
+                background: #102132;
+                color: #dcefff;
+                padding: 1rem;
+                border-radius: 0.75rem;
+                min-height: 8rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body data-data-layer-mode="rehydrate">
+        <div class="shell">
+            <div class="panel">
+                <h1>Redirecting to checkout</h1>
+                <p id="transit-status">Preparing the next page...</p>
+            </div>
+
+            <div class="panel">
+                <h2>Persisted dataLayer state</h2>
+                <pre id="events-view">[]</pre>
+            </div>
+        </div>
+
+        <script src="/shared/fixture-store.js"></script>
+        <script>
+            const store = window.fixtureStore;
+            const params = new URLSearchParams(window.location.search);
+            const next = params.get("next") || "/mutated/";
+            const label = params.get("label") || "next step";
+
+            document.getElementById("transit-status").textContent =
+                `Redirecting to ${label}...`;
+            store.bootPage({ viewSelector: "#events-view" });
+
+            setTimeout(() => {
+                window.location.href = next;
+            }, 350);
+        </script>
+    </body>
+</html>

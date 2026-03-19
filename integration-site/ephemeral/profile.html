@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ephemeral Fixture: Profile</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f4e8;
+        color: #202218;
+      }
+      main {
+        max-width: 54rem;
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+      }
+      section {
+        background: #fbfcf7;
+        border: 1px solid #cad0bb;
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+      button {
+        border: 0;
+        border-radius: 0.75rem;
+        padding: 0.9rem 1rem;
+        background: #965638;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+      }
+      pre {
+        background: #1c1f19;
+        color: #eef5e1;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        min-height: 8rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body data-data-layer-mode="ephemeral">
+    <main>
+      <section>
+        <h1>Profile follow-up</h1>
+        <p>
+          This page only shows the events created here. Previous pushes are gone
+          from the page-local `dataLayer`.
+        </p>
+      </section>
+
+      <section>
+        <div id="profile-actions">Loading profile actions...</div>
+      </section>
+
+      <section>
+        <h2>Current page dataLayer</h2>
+        <pre id="events-view">[]</pre>
+      </section>
+    </main>
+
+    <script src="/shared/fixture-store.js"></script>
+    <script>
+      const store = window.fixtureStore;
+      store.bootPage({ viewSelector: "#events-view" });
+
+      store.mountAfterDelay(
+        "#profile-actions",
+        `
+          <button data-testid="profile-update" type="button">
+            Send profile update
+          </button>
+        `,
+        250,
+      );
+
+      setTimeout(() => {
+        document
+          .querySelector('[data-testid="profile-update"]')
+          .addEventListener("click", () => {
+            store.pushEvent(
+              {
+                $schema:
+                  "https://tracking-docs-demo.buchert.digital/schemas/web/complex-event.json",
+                event: "user_update",
+                number_constraints: 12,
+                string_constraints: "BAD_HOST!",
+                user_data: {
+                  user_id: "U-300",
+                  attributes: {
+                    segment: "vip",
+                    score: 99,
+                  },
+                },
+              },
+              "#events-view",
+            );
+          });
+      }, 250);
+    </script>
+  </body>
+</html>

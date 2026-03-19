@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mutated Fixture: Landing</title>
+        <style>
+            body {
+                font-family: Georgia, serif;
+                margin: 0;
+                padding: 2rem;
+                background: linear-gradient(180deg, #f0f6ff, #ffffff);
+                color: #122033;
+            }
+            .shell {
+                max-width: 56rem;
+                margin: 0 auto;
+                display: grid;
+                gap: 1rem;
+            }
+            .panel {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #c9d7ea;
+                border-radius: 1.25rem;
+                padding: 1rem;
+            }
+            a {
+                display: inline-block;
+                padding: 0.9rem 1rem;
+                border-radius: 0.9rem;
+                background: #3668a1;
+                color: white;
+                text-decoration: none;
+            }
+            pre {
+                background: #102132;
+                color: #dcefff;
+                padding: 1rem;
+                border-radius: 0.75rem;
+                min-height: 8rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body data-data-layer-mode="rehydrate">
+        <div class="shell">
+            <div class="panel">
+                <h1>Mutated Fixture</h1>
+                <p>
+                    Same journey, different structure and selectors. The
+                    deterministic playbook should not survive this shape drift,
+                    even with redirects and delayed readiness.
+                </p>
+                <a
+                    data-testid="launch-journey"
+                    href="/mutated/transit.html?next=%2Fmutated%2Fcheckout.html&label=checkout"
+                >
+                    Begin customer journey
+                </a>
+            </div>
+
+            <div class="panel">
+                <h2>Persisted dataLayer state</h2>
+                <pre id="events-view">[]</pre>
+            </div>
+        </div>
+
+        <script src="/shared/fixture-store.js"></script>
+        <script>
+            window.fixtureStore.bootPage({
+                viewSelector: "#events-view",
+                reset: true,
+            });
+        </script>
+    </body>
+</html>

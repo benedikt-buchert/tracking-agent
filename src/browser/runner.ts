@@ -5,6 +5,8 @@ import type { EventSchema } from "../schema.js";
 
 export const VALIDATOR_BASE_URL =
   process.env.VALIDATOR_URL ?? "http://localhost:3000";
+export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
+const seenPageBoundaryWarnings = new Set<string>();
 
 export type BrowserFn = (args: string[]) => Promise<string>;
 
@@ -70,6 +72,45 @@ export function parseBrowserJsonArray(text: string): unknown[] {
   }
 }
 
+function parseDrainedInterceptorResult(text: string): {
+  events: unknown[];
+  recoveredCount: number;
+} {
+  try {
+    const parsed = JSON.parse(text || "[]");
+    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+
+    if (Array.isArray(result)) {
+      return { events: result, recoveredCount: 0 };
+    }
+
+    if (result !== null && typeof result === "object") {
+      const record = result as Record<string, unknown>;
+      const events = Array.isArray(record["events"]) ? record["events"] : [];
+      const recoveredCount =
+        typeof record["recoveredCount"] === "number"
+          ? record["recoveredCount"]
+          : 0;
+      return { events, recoveredCount };
+    }
+
+    return { events: [], recoveredCount: 0 };
+  } catch {
+    return { events: [], recoveredCount: 0 };
+  }
+}
+
+function recoveredEventNames(events: unknown[]): string[] {
+  const names = new Set<string>();
+  for (const event of events) {
+    if (event !== null && typeof event === "object") {
+      const name = (event as Record<string, unknown>)["event"];
+      if (typeof name === "string") names.add(name);
+    }
+  }
+  return [...names];
+}
+
 export async function getCurrentUrl(
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<string> {
@@ -120,32 +161,20 @@ export function formatAjvError(e: unknown): string {
   if (typeof e === "string") return e;
   if (e === null || typeof e !== "object") return JSON.stringify(e);
 
-  const { keyword, params, message, prefix } = parseAjvErrorObject(
-    e as Record<string, unknown>,
-  );
+  const err = e as Record<string, unknown>;
+  const instancePath =
+    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
+  const keyword = typeof err["keyword"] === "string" ? err["keyword"] : "";
+  const params =
+    err["params"] !== null && typeof err["params"] === "object"
+      ? (err["params"] as Record<string, unknown>)
+      : {};
+  const message = typeof err["message"] === "string" ? err["message"] : "";
+  const prefix = instancePath ? `${instancePath} ` : "";
   return (
     formatAjvKeywordError(keyword, params, prefix) ??
     (message ? `${prefix}${message}` : JSON.stringify(e))
   );
-}
-
-function parseAjvErrorObject(err: Record<string, unknown>): {
-  keyword: string;
-  params: Record<string, unknown>;
-  message: string;
-  prefix: string;
-} {
-  const instancePath =
-    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
-  return {
-    keyword: typeof err["keyword"] === "string" ? err["keyword"] : "",
-    params:
-      err["params"] !== null && typeof err["params"] === "object"
-        ? (err["params"] as Record<string, unknown>)
-        : {},
-    message: typeof err["message"] === "string" ? err["message"] : "",
-    prefix: instancePath ? `${instancePath} ` : "",
-  };
 }
 
 function formatAjvKeywordError(
@@ -487,29 +516,57 @@ export async function captureDataLayer(
 // If the page has changed, the interceptor is gone — this auto-detects that,
 // re-installs, and returns the full dataLayer from the new page.
 //
-// The injected JS is evaluated directly in the browser context and drained after
-// each action so post-navigation events are not lost.
+// The interceptor also mirrors new pushes into sessionStorage, so same-origin
+// navigations do not lose events emitted immediately before unload.
 
 export async function drainInterceptor(
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<unknown[]> {
   const js = [
     "(function() {",
+    `  var storageKey = ${JSON.stringify(DATA_LAYER_BRIDGE_STORAGE_KEY)};`,
     "  if (!window.__dl_intercepted) {",
     "    window.__dl_buffer = [];",
     "    var dl = window.dataLayer;",
     "    if (!Array.isArray(dl)) { window.dataLayer = []; dl = window.dataLayer; }",
     "    for (var i = 0; i < dl.length; i++) { window.__dl_buffer.push(dl[i]); }",
     "    var orig = dl.push;",
-    "    dl.push = function() { for (var j = 0; j < arguments.length; j++) { window.__dl_buffer.push(arguments[j]); } return orig.apply(dl, arguments); };",
+    "    dl.push = function() {",
+    "      for (var j = 0; j < arguments.length; j++) {",
+    "        try {",
+    "          var persisted = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+    "          persisted.push(arguments[j]);",
+    "          sessionStorage.setItem(storageKey, JSON.stringify(persisted));",
+    "        } catch (e) {}",
+    "      }",
+    "      return orig.apply(dl, arguments);",
+    "    };",
     "    window.__dl_intercepted = true;",
     "  }",
     "  var events = window.__dl_buffer.splice(0);",
-    "  return JSON.stringify(events);",
+    "  try {",
+    "    var persistedEvents = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+    "    sessionStorage.removeItem(storageKey);",
+    "    for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); }",
+    "  } catch (e) {}",
+    "  return JSON.stringify({ events: events, recoveredCount: persistedEvents ? persistedEvents.length : 0 });",
     "})()",
   ].join(" ");
   const out = await runBrowserEval(js, browser).catch(() => "");
-  return parseBrowserJsonArray(out);
+  const result = parseDrainedInterceptorResult(out);
+  if (result.recoveredCount > 0) {
+    const warningKey = JSON.stringify(result.events);
+    if (!seenPageBoundaryWarnings.has(warningKey)) {
+      seenPageBoundaryWarnings.add(warningKey);
+      const eventNames = recoveredEventNames(result.events);
+      const namesSuffix =
+        eventNames.length > 0 ? `: ${eventNames.join(", ")}` : "";
+      process.stderr.write(
+        `Warning: recovered ${result.recoveredCount} dataLayer event(s) across a page navigation boundary${namesSuffix}. These were fired while leaving the page, so GTM timing may be unreliable on the live site.\n`,
+      );
+    }
+  }
+  return result.events;
 }
 
 // ─── Session persistence ──────────────────────────────────────────────────────

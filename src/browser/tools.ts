@@ -1,16 +1,18 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
+  DATA_LAYER_BRIDGE_STORAGE_KEY,
   defaultBrowserFn,
   captureDataLayer,
   drainInterceptor,
+  mergeUniqueEvents,
   runBrowserEval,
   parseBrowserJsonArray,
 } from "./runner.js";
 import type { BrowserFn } from "./runner.js";
 
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }], details: {} };
+function textResult(text: string, details: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text }], details };
 }
 
 // ─── Tool: navigate ──────────────────────────────────────────────────────────
@@ -364,12 +366,93 @@ export function createFindTool(
     label: "Finding element",
     parameters: FindParams,
     execute: async (_id, { locator, value, action, fill_text }) => {
+      if (locator === "testid") {
+        const result = await executeTestIdDomAction(
+          browserFn,
+          value,
+          action,
+          fill_text,
+        );
+        return textResult(result.text || "Done", {
+          capturedEvents: result.capturedEvents,
+          timingRiskWarning: result.capturedEvents.length > 0,
+        });
+      }
+
       const args = ["find", locator, value, action];
       if (action === "fill" && fill_text) args.push(fill_text);
       const out = await browserFn(args);
       return textResult(out || "Done");
     },
   };
+}
+
+async function executeTestIdDomAction(
+  browserFn: BrowserFn,
+  value: string,
+  action: "click" | "fill",
+  fillText?: string,
+): Promise<{ text: string; capturedEvents: unknown[] }> {
+  const selector = `[data-testid=${JSON.stringify(value)}]`;
+  const js =
+    action === "click"
+      ? [
+          "(() => {",
+          "  const capturedEvents = [];",
+          `  const element = document.querySelector(${JSON.stringify(selector)});`,
+          "  if (!element) return JSON.stringify({ text: '✗ Element not found. Verify the selector is correct and the element exists in the DOM.', capturedEvents });",
+          `  const storageKey = ${JSON.stringify(DATA_LAYER_BRIDGE_STORAGE_KEY)};`,
+          "  const dl = Array.isArray(window.dataLayer) ? window.dataLayer : (window.dataLayer = []);",
+          "  const originalPush = typeof dl.push === 'function' ? dl.push.bind(dl) : Array.prototype.push.bind(dl);",
+          "  dl.push = function() {",
+          "    for (let i = 0; i < arguments.length; i++) {",
+          "      capturedEvents.push(arguments[i]);",
+          "      if (!window.__dl_intercepted) {",
+          "        const persisted = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+          "        persisted.push(arguments[i]);",
+          "        sessionStorage.setItem(storageKey, JSON.stringify(persisted));",
+          "      }",
+          "    }",
+          "    return originalPush(...arguments);",
+          "  };",
+          "  if (element instanceof HTMLElement) element.click();",
+          "  else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));",
+          "  return JSON.stringify({ text: '✓ Done', capturedEvents });",
+          "})()",
+        ].join(" ")
+      : [
+          "(() => {",
+          `  const element = document.querySelector(${JSON.stringify(selector)});`,
+          "  if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)) {",
+          "    return JSON.stringify({ text: '✗ Element not found. Verify the selector is correct and the element exists in the DOM.', capturedEvents: [] });",
+          "  }",
+          `  element.value = ${JSON.stringify(fillText ?? "")};`,
+          "  element.dispatchEvent(new Event('input', { bubbles: true }));",
+          "  element.dispatchEvent(new Event('change', { bubbles: true }));",
+          "  return JSON.stringify({ text: '✓ Done', capturedEvents: [] });",
+          "})()",
+        ].join(" ");
+
+  const out = await runBrowserEval(js, browserFn);
+  try {
+    const parsed = JSON.parse(out.trim().replace(/^"|"$/g, ""));
+    if (parsed !== null && typeof parsed === "object") {
+      return {
+        text:
+          typeof (parsed as Record<string, unknown>)["text"] === "string"
+            ? ((parsed as Record<string, unknown>)["text"] as string)
+            : "Done",
+        capturedEvents: Array.isArray(
+          (parsed as Record<string, unknown>)["capturedEvents"],
+        )
+          ? ((parsed as Record<string, unknown>)["capturedEvents"] as unknown[])
+          : [],
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { text: out.trim().replace(/^"|"$/g, ""), capturedEvents: [] };
 }
 
 export const findTool = createFindTool();
@@ -382,6 +465,24 @@ export const findTool = createFindTool();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyTool = AgentTool<any>;
+
+type SleepFn = (ms: number) => Promise<void>;
+interface DataLayerInterceptorOptions {
+  settleMs?: number;
+  settleIntervalMs?: number;
+  sleepFn?: SleepFn;
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldWaitForDelayedEvents(toolName: string, args: unknown): boolean {
+  if (toolName === "browser_click") return true;
+  if (toolName !== "browser_find") return false;
+  if (args === null || typeof args !== "object") return false;
+  return (args as Record<string, unknown>)["action"] === "click";
+}
 
 export function createDataLayerPoller(
   accumulator: unknown[],
@@ -414,16 +515,45 @@ export function createDataLayerPoller(
 export function createDataLayerInterceptor(
   accumulator: unknown[],
   browserFn: BrowserFn = defaultBrowserFn,
+  {
+    settleMs = 300,
+    settleIntervalMs = 50,
+    sleepFn = defaultSleep,
+  }: DataLayerInterceptorOptions = {},
 ): (tool: AnyTool) => AnyTool {
+  const appendUniqueEvents = (events: unknown[]) => {
+    if (events.length === 0) return;
+    const merged = mergeUniqueEvents(accumulator, events);
+    accumulator.splice(0, accumulator.length, ...merged);
+  };
+
+  const drainIntoAccumulator = async () => {
+    try {
+      const newEvents = await drainInterceptor(browserFn);
+      appendUniqueEvents(newEvents);
+    } catch {
+      /* non-fatal */
+    }
+  };
+
   return (tool: AnyTool): AnyTool => ({
     ...tool,
     execute: async (id: string, args: unknown) => {
+      await drainIntoAccumulator();
       const result = await tool.execute(id, args);
-      try {
-        const newEvents = await drainInterceptor(browserFn);
-        accumulator.push(...newEvents);
-      } catch {
-        /* non-fatal */
+      const capturedEvents = Array.isArray(result.details?.["capturedEvents"])
+        ? (result.details["capturedEvents"] as unknown[])
+        : [];
+      if (capturedEvents.length > 0) {
+        appendUniqueEvents(capturedEvents);
+      }
+      await drainIntoAccumulator();
+      if (settleMs > 0 && shouldWaitForDelayedEvents(tool.name, args)) {
+        const attempts = Math.max(1, Math.ceil(settleMs / settleIntervalMs));
+        for (let i = 0; i < attempts; i++) {
+          await sleepFn(settleIntervalMs);
+          await drainIntoAccumulator();
+        }
       }
       return result;
     },
