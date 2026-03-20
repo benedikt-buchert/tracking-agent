@@ -116,8 +116,10 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
     readPrompt: vi.fn((name: string) => `prompt:${name}`),
   }));
 
+  const createAgentMock = vi.fn(() => new FakeAgent(agentPrompt));
+
   vi.doMock("../agent/runtime.js", () => ({
-    createAgent: vi.fn(() => new FakeAgent(agentPrompt)),
+    createAgent: createAgentMock,
     collectAgentText: vi.fn(async () => options.rewriteText ?? ""),
   }));
 
@@ -141,6 +143,7 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
       saveSession,
       extractPlaybookSteps,
       agentPrompt,
+      createAgent: createAgentMock,
     },
   };
 }
@@ -474,6 +477,104 @@ describe("agent workflows", () => {
     expect(resumePrompt).toContain("Continue exploring");
     expect(resumePrompt).toContain("re-opened at");
     expect(resumePrompt).toContain("You are resuming");
+  });
+
+  it("passes replay-recovery purpose to createAgent when replay gets stuck", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("replay recovery"),
+    );
+  });
+
+  it("includes 'browser is currently open' in the stuck-replay fallback prompt", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const fallbackPrompt = mocks.agentPrompt.mock.calls[0]?.[1] as string;
+    expect(fallbackPrompt).toContain("browser is currently open");
+  });
+
+  it("passes exploring purpose to createAgent in fresh interactive mode", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("exploring"),
+    );
+  });
+
+  it("passes resuming purpose to createAgent when resume=true", async () => {
+    const savedMessages = [{ role: "assistant", content: [] }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      savedMessages,
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      savedMessages,
+      true,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("resuming"),
+    );
+  });
+
+  it("replay optimize message includes 'optimize updated playbook' in stderr", async () => {
+    const { runReplayMode } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+      rewriteText: "optimized rewrite",
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("optimize updated playbook");
   });
 
   // ─── makeStepExecutor (via replayPlaybook executor argument) ─────────────────
