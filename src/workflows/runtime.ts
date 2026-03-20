@@ -2,6 +2,11 @@ import chalk from "chalk";
 import { discoverEventSchemas } from "../schema.js";
 import type { EventSchema } from "../schema.js";
 import {
+  createLocalFirstLoader,
+  defaultLoadSchema,
+} from "../validation/index.js";
+import type { LoadSchemaFn } from "../validation/index.js";
+import {
   closeBrowser,
   drainInterceptor,
   getCurrentUrl,
@@ -17,7 +22,16 @@ export const PLAYBOOK_FILE = ".tracking-agent-playbook.json";
 export async function loadRunState(
   schemaUrl: string,
   resume: boolean,
-): Promise<{ eventSchemas: EventSchema[]; savedMessages: unknown[] }> {
+  schemasDir?: string,
+): Promise<{
+  eventSchemas: EventSchema[];
+  savedMessages: unknown[];
+  loadSchemaFn: LoadSchemaFn;
+}> {
+  const loadSchemaFn = schemasDir
+    ? createLocalFirstLoader(schemasDir)
+    : defaultLoadSchema;
+
   if (resume) {
     process.stderr.write(
       chalk.dim(`  Loading session from ${SESSION_FILE}...\n`),
@@ -31,6 +45,7 @@ export async function loadRunState(
     return {
       eventSchemas: session.eventSchemas,
       savedMessages: session.messages,
+      loadSchemaFn,
     };
   }
 
@@ -40,11 +55,12 @@ export async function loadRunState(
   const eventSchemas = await discoverEventSchemas(
     schemaUrl,
     "web-datalayer-js",
+    loadSchemaFn,
   );
   process.stderr.write(
     chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`),
   );
-  return { eventSchemas, savedMessages: [] };
+  return { eventSchemas, savedMessages: [], loadSchemaFn };
 }
 
 export async function openBrowser(

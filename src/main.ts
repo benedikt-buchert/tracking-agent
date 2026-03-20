@@ -27,7 +27,7 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const { schemaUrl, targetUrl, resume, replay, headless } = args;
+  const { schemaUrl, targetUrl, resume, replay, headless, schemasDir } = args;
 
   const mode = replay ? "replay" : resume ? "resume" : "fresh";
   process.stderr.write(
@@ -38,7 +38,11 @@ export async function main(): Promise<void> {
       "\n",
   );
 
-  const { eventSchemas, savedMessages } = await loadRunState(schemaUrl, resume);
+  const { eventSchemas, savedMessages, loadSchemaFn } = await loadRunState(
+    schemaUrl,
+    resume,
+    schemasDir,
+  );
   await openBrowser(targetUrl, headless);
 
   const accumulatedEvents: unknown[] = [];
@@ -62,7 +66,7 @@ export async function main(): Promise<void> {
   const events = await captureFinalEvents(accumulatedEvents);
 
   process.stderr.write(chalk.dim(`  Validating events...\n`));
-  const results = await validateAll(events, eventSchemas, schemaUrl);
+  const results = await validateAll(events, eventSchemas, schemaUrl, loadSchemaFn);
 
   const expectedNames = eventSchemas.map((s) => s.eventName);
   const report = generateReport(results, expectedNames, events, eventSchemas);

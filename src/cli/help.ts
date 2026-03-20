@@ -9,6 +9,7 @@ export function buildHelpText(): string {
     chalk.bold("  Options\n") +
     `    ${chalk.cyan("--schema")}  URL of the JSON Schema to validate against\n` +
     `    ${chalk.cyan("--url")}     URL of the website to test\n` +
+    `    ${chalk.cyan("--schemas-dir")}  Local directory of schema files (used instead of remote fetches)\n` +
     `    ${chalk.cyan("--resume")}  Resume a previous session from .tracking-agent-session.json\n` +
     `    ${chalk.cyan("--replay")}    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)\n` +
     `    ${chalk.cyan("--headless")}  Run the browser in the background (no visible window)\n` +

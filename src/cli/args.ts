@@ -6,6 +6,7 @@ export interface CliArgs {
   resume: boolean;
   replay: boolean;
   headless: boolean;
+  schemasDir?: string;
 }
 
 export interface ParsedArgs {
@@ -15,6 +16,7 @@ export interface ParsedArgs {
   replay: boolean;
   headless: boolean;
   help: boolean;
+  schemasDir?: string;
 }
 
 export type PromptFn = (question: string) => Promise<string>;
@@ -27,6 +29,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < argv.length - 1; i++) {
     if (argv[i] === "--schema") args["schema"] = argv[i + 1];
     if (argv[i] === "--url") args["url"] = argv[i + 1];
+    if (argv[i] === "--schemas-dir") args["schemas-dir"] = argv[i + 1];
   }
   const resume = argv.includes("--resume");
   const replay = argv.includes("--replay");
@@ -34,6 +37,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return {
     schemaUrl: args["schema"],
     targetUrl: args["url"],
+    schemasDir: args["schemas-dir"],
     resume,
     replay,
     headless,
@@ -96,6 +100,7 @@ async function resolveSavedArgs(
       resume: parsed.resume,
       replay: parsed.replay,
       headless: parsed.headless,
+      schemasDir: parsed.schemasDir,
     };
   } catch {
     return null;
@@ -134,5 +139,6 @@ export async function resolveArgs(
     resume: parsed.resume,
     replay: parsed.replay,
     headless: parsed.headless,
+    schemasDir: parsed.schemasDir,
   };
 }

@@ -38,6 +38,7 @@ tracking-agent --schema <url> --url <url> [options]
 |--------|-------------|
 | `--schema` | HTTP URL or local file path of the JSON Schema to validate against |
 | `--url` | URL of the website to test |
+| `--schemas-dir` | Local directory of schema files — used instead of remote fetches when available |
 | `--resume` | Resume a previous session from `.tracking-agent-session.json` |
 | `--replay` | Replay recorded steps from `.tracking-agent-playbook.json` (LLM fallback on failure) |
 | `--headless` | Run the browser in the background (no visible window) |
@@ -140,6 +141,8 @@ RUN_LLM_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... npm run verify:local
 ```
 
 ## Development
+
+All non-trivial changes follow red-green-refactor: write the smallest failing test first, then the smallest passing code, then refactor. See [AGENTS.md](AGENTS.md) for the full contribution rules.
 
 ```bash
 npm test             # run all unit tests

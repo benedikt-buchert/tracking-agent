@@ -5,5 +5,13 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     exclude: ["dist/**", "node_modules/**", "src/**/*.integration.test.ts"],
     testTimeout: 30000,
+    coverage: {
+      exclude: [
+        "dist/**",
+        "node_modules/**",
+        "src/**/*.integration.test.ts",
+        "src/**/index.ts",
+      ],
+    },
   },
 });

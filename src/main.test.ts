@@ -13,6 +13,7 @@ async function setupMainModule() {
       },
     ],
     savedMessages: [],
+    loadSchemaFn: vi.fn(),
   });
   const openBrowser = vi.fn().mockResolvedValue(undefined);
   const buildAgentTools = vi.fn().mockReturnValue({ tools: [] });
@@ -139,6 +140,7 @@ describe("main composition", () => {
     expect(mocks.loadRunState).toHaveBeenCalledWith(
       "https://example.com/schema.json",
       false,
+      undefined,
     );
     expect(mocks.openBrowser).toHaveBeenCalledWith(
       "https://example.com",
