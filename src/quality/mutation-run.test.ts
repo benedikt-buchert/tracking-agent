@@ -17,6 +17,17 @@ describe("parseArgs", () => {
       dryRunOnly: false,
     });
   });
+
+  it("returns dryRunOnly=false when only unknown args are given", () => {
+    expect(parseArgs(["--unknown", "value"])).toEqual({
+      staged: false,
+      dryRunOnly: false,
+    });
+  });
+
+  it("returns defaults when called with empty argv", () => {
+    expect(parseArgs([])).toEqual({ staged: false, dryRunOnly: false });
+  });
 });
 
 describe("gitOutput", () => {
