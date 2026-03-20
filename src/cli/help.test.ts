@@ -25,6 +25,10 @@ describe("buildHelpText", () => {
     expect(buildHelpText().endsWith("\n")).toBe(true);
   });
 
+  it("ends with a blank line after the vertex auth hint", () => {
+    expect(buildHelpText()).toMatch(/\n\n$/);
+  });
+
   it("renders the documented usage, options, and environment lines", () => {
     expect(stripAnsi(buildHelpText())).toContain(`tracking-agent
 

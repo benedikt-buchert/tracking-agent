@@ -408,4 +408,38 @@ describe("createConsoleHandler", () => {
     } as unknown as AgentEvent);
     expect(out).toHaveLength(0);
   });
+
+  it("includes the cyan arrow character in tool execution output", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeToolStart("browser_navigate"));
+    expect(err.join("")).toContain("▶");
+  });
+
+  it("formats the tool detail with a space-em-dash-space separator", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_navigate",
+      args: { url: "https://example.com/checkout" },
+    });
+    expect(err.join("")).toContain(" — https://example.com/checkout");
+  });
+
+  it("includes 'Agent error:' prefix in the error output", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("500 Internal Server Error"));
+    expect(err.join("")).toContain("Agent error:");
+  });
+
+  it("non-billing errors do not append extra text after the error message", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("401 Unauthorized"));
+    const plain = err.join("").replace(/\x1B\[[0-9;]*m/g, "");
+    expect(plain.trim()).toMatch(/401 Unauthorized$/);
+  });
 });
