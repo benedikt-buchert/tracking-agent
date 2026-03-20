@@ -94,12 +94,21 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
       return;
     }
 
+    agent.emit({ type: "turn_start" });
     for (const event of recordedToolEvents) {
       agent.emit({
         type: "tool_execution_start",
         toolName: event.toolName,
         args: event.args,
         toolCallId: "tool-1",
+      });
+      agent.emit({
+        type: "tool_execution_end",
+        toolName: event.toolName,
+        args: event.args,
+        toolCallId: "tool-1",
+        result: {},
+        isError: false,
       });
     }
     agent.emit(
@@ -112,7 +121,9 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   vi.doMock("../browser/runner.js", () => ({
     extractPlaybookSteps,
-    isActionTool: vi.fn((toolName: string) => toolName.startsWith("browser_")),
+    isActionTool: vi.fn((toolName: string) =>
+      ["browser_navigate","browser_click","browser_fill","browser_find","browser_wait","request_human_input"].includes(toolName)
+    ),
     loadPlaybook,
     replayPlaybook,
     savePlaybook,
@@ -753,6 +764,71 @@ describe("agent workflows", () => {
     expect(lastPrompt).toMatch(/✓.*purchase/);
     expect(lastPrompt).toMatch(/✗.*page_view/);
     expect(lastPrompt).toContain("1/2");
+  });
+
+  // ─── task list display ────────────────────────────────────────────────────
+
+  it("writes task list header to stderr at turn_start", async () => {
+    const { runInteractiveMode } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const stderrOutput = stderr.mock.calls.map(([t]: [unknown]) => String(t)).join("");
+    expect(stderrOutput).toContain("purchase");
+    expect(stderrOutput).toContain("0/1");
+  });
+
+  it("writes compact task progress to stderr after action tool completes", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#buy" } },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const stderrOutput = stderr.mock.calls.map(([t]: [unknown]) => String(t)).join("");
+    expect(stderrOutput).toMatch(/✓.*purchase/);
+    expect(stderrOutput).toContain("1/1");
+  });
+
+  it("does not write task progress after non-action tools", async () => {
+    const { runInteractiveMode } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_snapshot", args: {} },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_snapshot", execute: vi.fn() }] as never,
+    );
+
+    // The turn_start header uses "◈ Tasks" — compact updates use "◈ N/M" (no "Tasks")
+    const compactUpdates = stderr.mock.calls
+      .map(([t]: [unknown]) => String(t))
+      .filter((s: string) => s.includes("◈") && !s.includes("Tasks"));
+    expect(compactUpdates).toHaveLength(0);
   });
 
   // ─── task list injection — replay fallback ───────────────────────────────

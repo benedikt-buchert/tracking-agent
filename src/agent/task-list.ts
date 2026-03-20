@@ -13,6 +13,7 @@ export interface TaskList {
   readonly totalCount: number;
   update(events: unknown[]): void;
   format(): string;
+  formatCompact(): string;
 }
 
 export function createTaskList(eventSchemas: EventSchema[]): TaskList {
@@ -57,6 +58,17 @@ export function createTaskList(eventSchemas: EventSchema[]): TaskList {
         for (const t of found) lines.push(`  ✓ ${t.eventName}`);
       }
       return lines.join("\n");
+    },
+
+    formatCompact() {
+      const pending = tasks.filter((t) => t.status === "pending");
+      const found = tasks.filter((t) => t.status === "found");
+      const parts = [
+        `${this.foundCount}/${this.totalCount}`,
+        ...pending.map((t) => `✗ ${t.eventName}`),
+        ...found.map((t) => `✓ ${t.eventName}`),
+      ];
+      return parts.join("  ");
     },
   };
 }

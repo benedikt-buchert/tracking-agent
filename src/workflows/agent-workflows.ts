@@ -19,7 +19,41 @@ import { createConsoleHandler } from "../agent/console-handler.js";
 import { buildInitialPrompt, createSystemPrompt, readPrompt } from "../agent/prompts.js";
 import { collectAgentText, createAgent } from "../agent/runtime.js";
 import { createTaskList } from "../agent/task-list.js";
+import type { TaskList } from "../agent/task-list.js";
 import { PLAYBOOK_FILE, SESSION_FILE } from "./runtime.js";
+
+type WriteErrFn = (s: string) => void;
+
+function attachTaskListDisplay(
+  agent: Agent,
+  taskList: TaskList,
+  accumulatedEvents: unknown[],
+  writeErr: WriteErrFn = (s) => process.stderr.write(s),
+): void {
+  agent.subscribe((event) => {
+    if (event.type === "turn_start") {
+      const header = chalk.bold(`\n  ◈ Tasks ${taskList.foundCount}/${taskList.totalCount}\n`) +
+        taskList.tasks
+          .map((t) =>
+            t.status === "found"
+              ? chalk.green(`  ✓ ${t.eventName}`)
+              : chalk.dim(`  ✗ ${t.eventName}`),
+          )
+          .join("\n") +
+        "\n";
+      writeErr(header);
+    }
+    if (
+      event.type === "tool_execution_end" &&
+      isActionTool((event as { toolName: string }).toolName)
+    ) {
+      taskList.update(accumulatedEvents);
+      writeErr(
+        chalk.dim(`  ◈ ${taskList.formatCompact()}\n`),
+      );
+    }
+  });
+}
 
 function makeStepExecutor(tools: typeof allTools): StepExecutor {
   return async (step: PlaybookStep) => {
@@ -150,6 +184,7 @@ export async function runReplayMode(
   const baseSystemPrompt = createSystemPrompt();
   taskList.update(accumulatedEvents);
   agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+  attachTaskListDisplay(agent, taskList, accumulatedEvents);
   agent.subscribe((event) => {
     if (event.type === "turn_end") {
       taskList.update(accumulatedEvents);
@@ -229,6 +264,7 @@ export async function runInteractiveMode(
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, recordedSteps, () => recording);
+  attachTaskListDisplay(agent, taskList, accumulatedEvents);
 
   agent.subscribe((event) => {
     if (event.type === "turn_end") {

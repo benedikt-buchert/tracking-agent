@@ -107,4 +107,40 @@ describe("createTaskList", () => {
       expect(tl.format()).toContain("0/0");
     });
   });
+
+  describe("formatCompact()", () => {
+    it("returns a single line with no newlines", () => {
+      const tl = createTaskList(schemas);
+      expect(tl.formatCompact()).not.toContain("\n");
+    });
+
+    it("includes the found/total count", () => {
+      const tl = createTaskList(schemas);
+      tl.update([{ event: "purchase" }]);
+      expect(tl.formatCompact()).toContain("1/3");
+    });
+
+    it("marks found events with ✓", () => {
+      const tl = createTaskList(schemas);
+      tl.update([{ event: "purchase" }]);
+      expect(tl.formatCompact()).toMatch(/✓.*purchase/);
+    });
+
+    it("marks pending events with ✗", () => {
+      const tl = createTaskList(schemas);
+      tl.update([{ event: "purchase" }]);
+      expect(tl.formatCompact()).toMatch(/✗.*add_to_cart/);
+    });
+
+    it("lists pending events before found events", () => {
+      const tl = createTaskList(schemas);
+      tl.update([{ event: "purchase" }]);
+      const s = tl.formatCompact();
+      expect(s.indexOf("add_to_cart")).toBeLessThan(s.indexOf("purchase"));
+    });
+
+    it("handles empty schema list without throwing", () => {
+      expect(() => createTaskList([]).formatCompact()).not.toThrow();
+    });
+  });
 });
