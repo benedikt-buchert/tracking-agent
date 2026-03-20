@@ -98,14 +98,15 @@ export function extractTrackingTargets(schema: unknown): string[] {
 export async function discoverEventSchemas(
   entryUrl: string,
   trackingTarget?: string,
+  loadFn: (url: string) => Promise<unknown> = fetchJson,
 ): Promise<EventSchema[]> {
-  const entrySchema = await fetchJson(entryUrl);
+  const entrySchema = await loadFn(entryUrl);
   const rawRefs = extractRefs(entrySchema);
 
   const results: EventSchema[] = [];
   for (const ref of rawRefs) {
     const schemaUrl = resolveRef(ref, entryUrl);
-    const subSchema = await fetchJson(schemaUrl);
+    const subSchema = await loadFn(schemaUrl);
 
     if (trackingTarget !== undefined) {
       const targets = extractTrackingTargets(subSchema);

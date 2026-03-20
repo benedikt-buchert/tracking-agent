@@ -9,3 +9,4 @@ tracking-reports/
 .stryker-tmp/
 .DS_Store
 .cache/
+.claude/

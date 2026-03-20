@@ -131,6 +131,28 @@ describe("parseArgs", () => {
     expect(result.schemaUrl).toBe("https://example.com/schema.json");
     expect(result.targetUrl).toBeUndefined();
   });
+
+  it("parses --schemas-dir into schemasDir", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--schemas-dir",
+      "./local-schemas",
+    ]);
+    expect(result.schemasDir).toBe("./local-schemas");
+  });
+
+  it("returns undefined for schemasDir when --schemas-dir is absent", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+    ]);
+    expect(result.schemasDir).toBeUndefined();
+  });
 });
 
 describe("resolveArgs", () => {
@@ -404,6 +426,18 @@ describe("resolveArgs", () => {
     );
 
     expect(result?.targetUrl).toBe("https://cli-site.com");
+  });
+
+  it("passes --schemas-dir through to the resolved CliArgs", async () => {
+    const result = await resolveArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--schemas-dir",
+      "./local-schemas",
+    ]);
+    expect(result?.schemasDir).toBe("./local-schemas");
   });
 
   it("returns null in headless mode when --schema is provided but --url is missing", async () => {

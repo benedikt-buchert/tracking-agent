@@ -53,6 +53,7 @@ describe.sequential("agent-browser integration fixture", () => {
     const eventSchemas = await discoverEventSchemas(
       SCHEMA_URL,
       "web-datalayer-js",
+      loadSchemaFn,
     );
     const accumulatedEvents: unknown[] = [];
     const { tools } = buildAgentTools(accumulatedEvents, true);
@@ -145,6 +146,7 @@ describe.sequential("agent-browser integration fixture", () => {
     const eventSchemas = await discoverEventSchemas(
       SCHEMA_URL,
       "web-datalayer-js",
+      loadSchemaFn,
     );
     const accumulatedEvents: unknown[] = [];
     const { tools } = buildAgentTools(accumulatedEvents, true);
