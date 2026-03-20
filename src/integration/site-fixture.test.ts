@@ -1,5 +1,76 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { startFixtureSiteServer } from "./site-fixture.js";
+import {
+  startFixtureSiteServer,
+  fixtureScenarios,
+  SCHEMA_URL,
+} from "./site-fixture.js";
+
+describe("SCHEMA_URL", () => {
+  it("points to the event-reference.json endpoint", () => {
+    expect(SCHEMA_URL).toContain("event-reference.json");
+    expect(SCHEMA_URL).toMatch(/^https:\/\//);
+  });
+});
+
+describe("fixtureScenarios", () => {
+  it("has exactly three scenarios: deterministic, mutated, ephemeral", () => {
+    const names = fixtureScenarios.map((s) => s.name);
+    expect(names).toEqual(["deterministic", "mutated", "ephemeral"]);
+  });
+
+  it("each scenario has a route matching its name", () => {
+    for (const scenario of fixtureScenarios) {
+      expect(scenario.route).toContain(scenario.name);
+    }
+  });
+
+  it("deterministic scenario uses rehydrate dataLayerMode", () => {
+    const det = fixtureScenarios.find((s) => s.name === "deterministic")!;
+    expect(det.dataLayerMode).toBe("rehydrate");
+  });
+
+  it("ephemeral scenario uses ephemeral dataLayerMode", () => {
+    const eph = fixtureScenarios.find((s) => s.name === "ephemeral")!;
+    expect(eph.dataLayerMode).toBe("ephemeral");
+  });
+
+  it("deterministic playbook includes a browser_find click on start-checkout", () => {
+    const det = fixtureScenarios.find((s) => s.name === "deterministic")!;
+    const firstStep = det.deterministicPlaybook[0];
+    expect(firstStep.tool).toBe("browser_find");
+    expect(firstStep.args).toMatchObject({
+      locator: "testid",
+      value: "start-checkout",
+      action: "click",
+    });
+  });
+
+  it("all scenarios share the same expectedValidEvents", () => {
+    const validEvents = fixtureScenarios[0].expectedValidEvents;
+    expect(validEvents).toContain("purchase");
+    expect(validEvents).toContain("address_submitted");
+    for (const scenario of fixtureScenarios) {
+      expect(scenario.expectedValidEvents).toEqual(validEvents);
+    }
+  });
+
+  it("all scenarios include checkout_complete in expectedMissingEvents", () => {
+    for (const scenario of fixtureScenarios) {
+      expect(scenario.expectedMissingEvents).toContain("checkout_complete");
+    }
+  });
+
+  it("deterministic scenario pages include the checkout page", () => {
+    const det = fixtureScenarios.find((s) => s.name === "deterministic")!;
+    expect(det.pages).toContain("/deterministic/checkout.html");
+  });
+
+  it("mutated playbook starts with launch-journey instead of start-checkout", () => {
+    const mut = fixtureScenarios.find((s) => s.name === "mutated")!;
+    const firstStep = mut.deterministicPlaybook[0];
+    expect(firstStep.args).toMatchObject({ value: "launch-journey" });
+  });
+});
 
 describe("startFixtureSiteServer", () => {
   let close: (() => Promise<void>) | undefined;
@@ -86,6 +157,15 @@ describe("startFixtureSiteServer", () => {
     const res = await fetch(`${server.baseUrl}/deterministic/checkout.html`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("serves unknown extensions with text/plain content-type", async () => {
+    const server = await startFixtureSiteServer();
+    close = server.close;
+
+    const res = await fetch(`${server.baseUrl}/shared/test.txt`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
   });
 
   it("close() resolves without error", async () => {

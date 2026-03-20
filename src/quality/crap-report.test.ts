@@ -210,26 +210,29 @@ describe("runCrapReport", () => {
   });
 
   it("sorts higher-CRAP reports first", () => {
+    // a(CRAP=2), b(CRAP=1), c(CRAP=6) — input order is [a,b,c] (ascending then high)
+    // Expected output: c(6), a(2), b(1). Removing sort would give [a,b,c]; wrong comparator reverses to [c,b,a].
     const coverage = JSON.stringify({
       "src/a.ts": {
         path: "src/a.ts",
         statementMap: {
-          "0": {
-            start: { line: 1, column: 0 },
-            end: { line: 1, column: 20 },
-          },
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
         },
         s: { "0": 1 },
       },
       "src/b.ts": {
         path: "src/b.ts",
         statementMap: {
-          "0": {
-            start: { line: 1, column: 0 },
-            end: { line: 1, column: 10 },
-          },
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
         },
         s: { "0": 1 },
+      },
+      "src/c.ts": {
+        path: "src/c.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 50 } },
+        },
+        s: { "0": 0 },
       },
     });
     const write = vi.fn();
@@ -238,20 +241,22 @@ describe("runCrapReport", () => {
       execFileSyncFn: vi.fn(() => "") as never,
       readFileSyncFn: vi.fn((path: string) => {
         if (path.endsWith("coverage-final.json")) return coverage;
-        if (path.endsWith("a.ts")) {
+        if (path.endsWith("a.ts"))
           return "export function a(value: boolean) { return value ? 1 : 0; }";
-        }
-        return "export function b() { return 1; }";
+        if (path.endsWith("b.ts")) return "export function b() { return 1; }";
+        return "export function c(value: boolean) { return value ? 1 : 0; }";
       }) as never,
-      readdirSyncFn: vi.fn(() => ["b.ts", "a.ts"]) as never,
+      readdirSyncFn: vi.fn(() => ["a.ts", "b.ts", "c.ts"]) as never,
       statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
       write,
     });
 
     expect(write).toHaveBeenCalledWith(
       "file\tfunction\tline\tcomplexity\tcoverage\tcrap\n" +
+        "src/c.ts\tc\t1\t2\t0\t6\n" +
         "src/a.ts\ta\t1\t2\t100\t2\n" +
         "src/b.ts\tb\t1\t1\t100\t1\n",
     );
   });
+
 });

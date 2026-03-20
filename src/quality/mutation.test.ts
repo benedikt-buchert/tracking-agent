@@ -25,6 +25,14 @@ describe("isMutatableSourceFile", () => {
     expect(isMutatableSourceFile("src/runner.js")).toBe(false);
     expect(isMutatableSourceFile("src/data.json")).toBe(false);
   });
+
+  it("excludes TypeScript test files inside src/", () => {
+    expect(isMutatableSourceFile("src/agent.test.ts")).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    expect(isMutatableSourceFile("")).toBe(false);
+  });
 });
 
 describe("selectMutationTargets", () => {
@@ -41,24 +49,19 @@ describe("selectMutationTargets", () => {
 });
 
 describe("buildStrykerArgs", () => {
+  const baseArgs = ["run", "--coverageAnalysis", "off", "--concurrency", "1"];
+
   it("builds full-run args when no explicit targets are provided", () => {
-    expect(buildStrykerArgs()).toEqual([
-      "run",
-      "--coverageAnalysis",
-      "off",
-      "--concurrency",
-      "1",
-    ]);
+    expect(buildStrykerArgs()).toEqual(baseArgs);
   });
 
   it("does not add --mutate when targets is an empty array", () => {
-    expect(buildStrykerArgs([])).toEqual([
-      "run",
-      "--coverageAnalysis",
-      "off",
-      "--concurrency",
-      "1",
-    ]);
+    expect(buildStrykerArgs([])).toEqual(baseArgs);
+    expect(buildStrykerArgs([])).not.toContain("--mutate");
+  });
+
+  it("does not add --mutate when targets is undefined", () => {
+    expect(buildStrykerArgs(undefined)).toEqual(baseArgs);
   });
 
   it("adds mutate args for targeted runs", () => {
