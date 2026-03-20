@@ -335,4 +335,52 @@ describe("resolveArgs", () => {
     });
     expect(prompt).toHaveBeenCalledTimes(2);
   });
+
+  it("prompts for schemaUrl when replay file has no schemaUrl but has targetUrl", async () => {
+    // Covers L89 branch[2]: both parsed.schemaUrl and saved.schemaUrl are missing
+    const prompt = vi.fn().mockResolvedValue("https://prompted-schema.json");
+    const readFileFn = vi.fn().mockResolvedValue(
+      JSON.stringify({ targetUrl: "https://saved-site.com", steps: [] }),
+    );
+
+    const result = await resolveArgs(["--replay"], prompt, readFileFn);
+
+    expect(result?.schemaUrl).toBe("https://prompted-schema.json");
+    expect(result?.targetUrl).toBe("https://saved-site.com");
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Schema URL"));
+  });
+
+  it("uses CLI --url over saved targetUrl in replay mode", async () => {
+    // Covers L93 branch[0]: parsed.targetUrl is set
+    const readFileFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        schemaUrl: "https://saved-schema.json",
+        targetUrl: "https://saved-site.com",
+        steps: [],
+      }),
+    );
+
+    const result = await resolveArgs(
+      ["--replay", "--url", "https://cli-site.com"],
+      undefined,
+      readFileFn,
+    );
+
+    expect(result?.targetUrl).toBe("https://cli-site.com");
+  });
+
+  it("returns null in headless mode when --schema is provided but --url is missing", async () => {
+    // Covers L118 branch[2]: headless=true, schemaUrl provided, targetUrl missing
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const result = await resolveArgs([
+      "--headless",
+      "--schema",
+      "https://example.com/schema.json",
+    ]);
+    expect(result).toBeNull();
+    expect(stderr).toHaveBeenCalled();
+    stderr.mockRestore();
+  });
 });
