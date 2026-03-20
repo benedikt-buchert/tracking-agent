@@ -136,6 +136,11 @@ describe("extractEventName", () => {
     };
     expect(extractEventName(schema)).toBeUndefined();
   });
+
+  it("falls back to title when properties.event is null", () => {
+    const schema = { properties: { event: null }, title: "Fallback" };
+    expect(extractEventName(schema)).toBe("Fallback");
+  });
 });
 
 // ─── extractDescription ───────────────────────────────────────────────────────
@@ -418,6 +423,26 @@ describe("discoverEventSchemas", () => {
 
     const result = await discoverEventSchemas(entryUrl);
     expect(result).toHaveLength(2);
+  });
+
+  it("uses the provided loadFn instead of global fetch", async () => {
+    const entryUrl = "https://example.com/schemas/entry.json";
+    const entrySchema = { oneOf: [{ $ref: "./web/purchase.json" }] };
+    const purchaseSchema = { properties: { event: { const: "purchase" } } };
+
+    const customLoader = vi
+      .fn()
+      .mockResolvedValueOnce(entrySchema)
+      .mockResolvedValueOnce(purchaseSchema);
+
+    const fetchSpy = vi.spyOn(global, "fetch");
+
+    const result = await discoverEventSchemas(entryUrl, undefined, customLoader);
+
+    expect(customLoader).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toHaveLength(1);
+    expect(result[0].eventName).toBe("purchase");
   });
 
   it("skips sub-schemas where no event name can be extracted", async () => {

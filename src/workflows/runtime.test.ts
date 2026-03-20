@@ -96,13 +96,56 @@ describe("workflow runtime", () => {
     expect(mocks.discoverEventSchemas).toHaveBeenCalledWith(
       "https://example.com/schema.json",
       "web-datalayer-js",
+      expect.any(Function),
     );
     expect(result.eventSchemas).toHaveLength(1);
     expect(result.savedMessages).toEqual([]);
+    expect(result.loadSchemaFn).toBeTypeOf("function");
     expect(stderr.mock.calls.join("")).toContain(
       "Discovering schemas from https://example.com/schema.json",
     );
     expect(stderr.mock.calls.join("")).toContain("Found 1 event schema(s)");
+  });
+
+  it("uses a local-first loader when schemasDir is provided", async () => {
+    vi.resetModules();
+
+    const localFirstFn = vi.fn();
+    const createLocalFirstLoader = vi.fn().mockReturnValue(localFirstFn);
+    const defaultLoadSchema = vi.fn();
+    const discoverEventSchemas = vi.fn().mockResolvedValue([]);
+
+    vi.doMock("../validation/index.js", () => ({
+      createLocalFirstLoader,
+      defaultLoadSchema,
+    }));
+    vi.doMock("../schema.js", () => ({ discoverEventSchemas }));
+    vi.doMock("../browser/runner.js", () => ({
+      closeBrowser: vi.fn(),
+      drainInterceptor: vi.fn().mockResolvedValue([]),
+      getCurrentUrl: vi.fn().mockResolvedValue(""),
+      loadSession: vi.fn(),
+      navigateTo: vi.fn(),
+      startHeadedBrowser: vi.fn(),
+      waitForNavigation: vi.fn(),
+    }));
+
+    const { loadRunState } = await import("./runtime.js");
+
+    const result = await loadRunState(
+      "https://example.com/schema.json",
+      false,
+      "/tmp/local-schemas",
+    );
+
+    expect(createLocalFirstLoader).toHaveBeenCalledWith("/tmp/local-schemas");
+    expect(defaultLoadSchema).not.toHaveBeenCalled();
+    expect(discoverEventSchemas).toHaveBeenCalledWith(
+      "https://example.com/schema.json",
+      "web-datalayer-js",
+      localFirstFn,
+    );
+    expect(result.loadSchemaFn).toBe(localFirstFn);
   });
 
   it("starts headed browser when headless is false", async () => {
@@ -153,5 +196,37 @@ describe("workflow runtime", () => {
     await closeRunBrowser();
 
     expect(mocks.closeBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it("PLAYBOOK_FILE is the expected filename", async () => {
+    const { PLAYBOOK_FILE } = await setupRuntimeModule();
+    expect(PLAYBOOK_FILE).toBe(".tracking-agent-playbook.json");
+  });
+
+  it("falls back to empty string for waitForNavigation when getCurrentUrl rejects", async () => {
+    vi.resetModules();
+    const drainInterceptor = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const getCurrentUrl = vi.fn().mockRejectedValue(new Error("browser gone"));
+    const waitForNavigation = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../schema.js", () => ({
+      discoverEventSchemas: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../browser/runner.js", () => ({
+      closeBrowser: vi.fn(),
+      drainInterceptor,
+      getCurrentUrl,
+      loadSession: vi.fn(),
+      navigateTo: vi.fn(),
+      startHeadedBrowser: vi.fn(),
+      waitForNavigation,
+    }));
+    const { captureFinalEvents } = await import("./runtime.js");
+
+    await captureFinalEvents([]);
+
+    expect(waitForNavigation).toHaveBeenCalledWith("");
   });
 });

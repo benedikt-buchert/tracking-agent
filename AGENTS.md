@@ -8,6 +8,7 @@
 - Keep changes small and explicit.
 - Run the narrowest useful verification first, then broaden.
 - Before commit, pass the staged quality gate.
+- Before merging to `main`, run the local integration checks. CI does not run them.
 - When business logic changes, strengthen tests, check staged CRAP, and run targeted mutation testing when practical.
 - Treat mutation testing as a CI barrier and a local tool for touched logic, not a default full pre-commit hook.
 - If a mutant survives because the code is overly complex, simplify the code instead of only adding tests.

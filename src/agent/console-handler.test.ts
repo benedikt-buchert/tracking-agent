@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { createConsoleHandler } from "./console-handler.js";
@@ -58,6 +58,23 @@ function makeAgentEnd(): AgentEvent {
 describe("createConsoleHandler", () => {
   afterEach(() => {
     delete process.env["MODEL_PROVIDER"];
+  });
+
+  it("uses process.stdout and process.stderr when called with no arguments", () => {
+    // Covers the default-arg branches at L70 and L73
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const handler = createConsoleHandler();
+    handler(makeTextDelta("hi"));
+    handler(makeToolStart("browser_navigate"));
+    expect(stdoutSpy).toHaveBeenCalledWith("hi");
+    expect(stderrSpy).toHaveBeenCalled();
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
   });
 
   it("writes each text_delta to the out stream", () => {
@@ -321,6 +338,16 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).toContain("platform.openai.com/settings/billing");
   });
 
+  it("uses the Anthropic billing URL when no MODEL_PROVIDER is set", () => {
+    // Kills ConditionalExpression "true" on getBillingUrl (always openai)
+    const err: string[] = [];
+    delete process.env["MODEL_PROVIDER"];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("credit balance is too low"));
+    expect(err.join("")).toContain("console.anthropic.com");
+    expect(err.join("")).not.toContain("openai");
+  });
+
   it("does not add a billing hint for generic non-billing errors", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
@@ -328,10 +355,91 @@ describe("createConsoleHandler", () => {
     expect(err.join("")).not.toContain("Hint: Add credits");
   });
 
+  it("billing hint contains Hint text for credit errors", () => {
+    // Kills ConditionalExpression "false" (hint always empty) on getBillingHint
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("credit balance is too low"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("billing hint is shown when error contains only billing keyword", () => {
+    // Kills LogicalOperator || → && on getBillingHint (billing alone must be enough)
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("rate limit exceeded due to billing issue"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("billing hint is shown when error contains only quota keyword", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("quota exceeded for this month"));
+    expect(err.join("")).toContain("Hint:");
+  });
+
+  it("does not write error on turn_end with non-error stopReason", () => {
+    // Kills ConditionalExpression "true" on the turn_end stopReason==="error" guard
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "turn_end",
+      message: { ...stubMsg, stopReason: "stop" as const },
+      toolResults: [],
+    });
+    expect(err).toHaveLength(0);
+  });
+
   it("surfaces generic API errors clearly", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(undefined, (s) => err.push(s));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).toContain("401 Invalid API key");
+  });
+
+  it("does not write when message_update event has a non-text_delta assistant event", () => {
+    const out: string[] = [];
+    const handler = createConsoleHandler((s) => out.push(s));
+    // Deliver a message_update whose assistantMessageEvent.type is not "text_delta"
+    handler({
+      type: "message_update",
+      message: { role: "user", content: [], timestamp: 0 },
+      assistantMessageEvent: { type: "message_start", partial: stubMsg },
+    } as unknown as AgentEvent);
+    expect(out).toHaveLength(0);
+  });
+
+  it("includes the cyan arrow character in tool execution output", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeToolStart("browser_navigate"));
+    expect(err.join("")).toContain("▶");
+  });
+
+  it("formats the tool detail with a space-em-dash-space separator", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler({
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "browser_navigate",
+      args: { url: "https://example.com/checkout" },
+    });
+    expect(err.join("")).toContain(" — https://example.com/checkout");
+  });
+
+  it("includes 'Agent error:' prefix in the error output", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("500 Internal Server Error"));
+    expect(err.join("")).toContain("Agent error:");
+  });
+
+  it("non-billing errors do not append extra text after the error message", () => {
+    const err: string[] = [];
+    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    handler(makeTurnEndError("401 Unauthorized"));
+    const plain = err.join("").replace(/\x1B\[[0-9;]*m/g, "");
+    expect(plain.trim()).toMatch(/401 Unauthorized$/);
   });
 });

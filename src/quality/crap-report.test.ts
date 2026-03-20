@@ -77,6 +77,11 @@ describe("getStagedFiles", () => {
     expect(getStagedFiles(execFileSyncFn as never)).toEqual(
       new Set(["src/a.ts", "src/b.ts"]),
     );
+    expect(execFileSyncFn).toHaveBeenCalledWith(
+      "git",
+      ["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
   });
 });
 
@@ -114,6 +119,41 @@ describe("runCrapReport", () => {
     );
   });
 
+  it("excludes .test.ts files from the report even when coverage exists for them", () => {
+    const coverage = JSON.stringify({
+      "src/sample.ts": {
+        path: "src/sample.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+        },
+        s: { "0": 1 },
+      },
+      "src/sample.test.ts": {
+        path: "src/sample.test.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+        },
+        s: { "0": 1 },
+      },
+    });
+    const write = vi.fn();
+
+    runCrapReport([], {
+      execFileSyncFn: vi.fn(() => "") as never,
+      readFileSyncFn: vi.fn((path: string) => {
+        if (path.endsWith("coverage-final.json")) return coverage;
+        return "export function f() { return 1; }";
+      }) as never,
+      readdirSyncFn: vi.fn(() => ["sample.ts", "sample.test.ts"]) as never,
+      statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+      write,
+    });
+
+    const output = write.mock.calls[0]?.[0] as string;
+    expect(output).toContain("src/sample.ts");
+    expect(output).not.toContain("src/sample.test.ts");
+  });
+
   it("prints a friendly message when no analyzable files are selected", () => {
     const write = vi.fn();
     runCrapReport(["--staged"], {
@@ -127,6 +167,22 @@ describe("runCrapReport", () => {
     expect(write).toHaveBeenCalledWith(
       "No analyzable files selected for CRAP reporting.\n",
     );
+  });
+
+  it("does not throw when no reports exceed the threshold", () => {
+    expect(() =>
+      runCrapReport(["--threshold", "100"], {
+        execFileSyncFn: vi.fn(() => "") as never,
+        readFileSyncFn: vi.fn((path: string) =>
+          path.endsWith("coverage-final.json")
+            ? coverageJson
+            : "export function sample() { return 1; }",
+        ) as never,
+        readdirSyncFn: vi.fn(() => ["sample.ts"]) as never,
+        statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+        write: vi.fn(),
+      }),
+    ).not.toThrow();
   });
 
   it("throws when the selected report exceeds the threshold", () => {
@@ -189,26 +245,29 @@ describe("runCrapReport", () => {
   });
 
   it("sorts higher-CRAP reports first", () => {
+    // a(CRAP=2), b(CRAP=1), c(CRAP=6) — input order is [a,b,c] (ascending then high)
+    // Expected output: c(6), a(2), b(1). Removing sort would give [a,b,c]; wrong comparator reverses to [c,b,a].
     const coverage = JSON.stringify({
       "src/a.ts": {
         path: "src/a.ts",
         statementMap: {
-          "0": {
-            start: { line: 1, column: 0 },
-            end: { line: 1, column: 20 },
-          },
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
         },
         s: { "0": 1 },
       },
       "src/b.ts": {
         path: "src/b.ts",
         statementMap: {
-          "0": {
-            start: { line: 1, column: 0 },
-            end: { line: 1, column: 10 },
-          },
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
         },
         s: { "0": 1 },
+      },
+      "src/c.ts": {
+        path: "src/c.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 50 } },
+        },
+        s: { "0": 0 },
       },
     });
     const write = vi.fn();
@@ -217,20 +276,22 @@ describe("runCrapReport", () => {
       execFileSyncFn: vi.fn(() => "") as never,
       readFileSyncFn: vi.fn((path: string) => {
         if (path.endsWith("coverage-final.json")) return coverage;
-        if (path.endsWith("a.ts")) {
+        if (path.endsWith("a.ts"))
           return "export function a(value: boolean) { return value ? 1 : 0; }";
-        }
-        return "export function b() { return 1; }";
+        if (path.endsWith("b.ts")) return "export function b() { return 1; }";
+        return "export function c(value: boolean) { return value ? 1 : 0; }";
       }) as never,
-      readdirSyncFn: vi.fn(() => ["b.ts", "a.ts"]) as never,
+      readdirSyncFn: vi.fn(() => ["a.ts", "b.ts", "c.ts"]) as never,
       statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
       write,
     });
 
     expect(write).toHaveBeenCalledWith(
       "file\tfunction\tline\tcomplexity\tcoverage\tcrap\n" +
+        "src/c.ts\tc\t1\t2\t0\t6\n" +
         "src/a.ts\ta\t1\t2\t100\t2\n" +
         "src/b.ts\tb\t1\t1\t100\t1\n",
     );
   });
+
 });

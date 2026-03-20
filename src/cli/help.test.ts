@@ -21,6 +21,14 @@ describe("buildHelpText", () => {
     expect(help).toContain("gcloud auth application-default login");
   });
 
+  it("ends with a trailing newline", () => {
+    expect(buildHelpText().endsWith("\n")).toBe(true);
+  });
+
+  it("ends with a blank line after the vertex auth hint", () => {
+    expect(buildHelpText()).toMatch(/\n\n$/);
+  });
+
   it("renders the documented usage, options, and environment lines", () => {
     expect(stripAnsi(buildHelpText())).toContain(`tracking-agent
 
@@ -32,6 +40,7 @@ describe("buildHelpText", () => {
   Options
     --schema  URL of the JSON Schema to validate against
     --url     URL of the website to test
+    --schemas-dir  Local directory of schema files (used instead of remote fetches)
     --resume  Resume a previous session from .tracking-agent-session.json
     --replay    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)
     --headless  Run the browser in the background (no visible window)

@@ -116,9 +116,25 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
     readPrompt: vi.fn((name: string) => `prompt:${name}`),
   }));
 
+  const createAgentMock = vi.fn(() => new FakeAgent(agentPrompt));
+
+  // Emit a tool event during optimization to detect if recording was incorrectly
+  // left as true (mutations at L140/L209 that change `recording = false` to true)
+  const collectAgentTextMock = vi.fn(
+    async (agent: FakeAgent, _prompt: string) => {
+      agent.emit({
+        type: "tool_execution_start",
+        toolName: "browser_navigate",
+        args: { url: "https://opt.example.com" },
+        toolCallId: "t-opt",
+      });
+      return options.rewriteText ?? "";
+    },
+  );
+
   vi.doMock("../agent/runtime.js", () => ({
-    createAgent: vi.fn(() => new FakeAgent(agentPrompt)),
-    collectAgentText: vi.fn(async () => options.rewriteText ?? ""),
+    createAgent: createAgentMock,
+    collectAgentText: collectAgentTextMock,
   }));
 
   vi.doMock("../agent/console-handler.js", () => ({
@@ -141,6 +157,8 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
       saveSession,
       extractPlaybookSteps,
       agentPrompt,
+      createAgent: createAgentMock,
+      collectAgentText: collectAgentTextMock,
     },
   };
 }
@@ -179,9 +197,13 @@ describe("agent workflows", () => {
     expect(mocks.replayPlaybook).toHaveBeenCalledTimes(1);
     expect(mocks.agentPrompt).not.toHaveBeenCalled();
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("skipping agent");
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("skipping agent");
+    expect(stderrText).toContain("Loading playbook");
+    expect(stderrText).toContain(".tracking-agent-playbook.json");
+    expect(stderrText).toContain("Replaying 1 step(s)");
   });
 
   it("falls back to the agent in replay mode and saves the optimized playbook", async () => {
@@ -229,12 +251,12 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("Falling back to agent");
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("optimized");
+    const stderrFallback = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrFallback).toContain("Falling back to agent");
+    expect(stderrFallback).toContain("optimized");
+    expect(stderrFallback).toContain("optimize");
   });
 
   it("does not save a playbook when replay recovery records no new steps", async () => {
@@ -341,9 +363,11 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("optimized");
+    const stderrInteractive = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrInteractive).toContain("optimized");
+    expect(stderrInteractive).toContain("optimize");
   });
 
   it("does not save a playbook for fresh runs when no action steps were recorded", async () => {
@@ -426,6 +450,22 @@ describe("agent workflows", () => {
     ).toContain("raw");
   });
 
+  it("runs a fresh interactive session when resume=true but savedMessages is empty", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [], // empty — no saved messages
+      true, // resume flag is set
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toBe("INITIAL PROMPT");
+  });
+
   it("resumes an existing session without saving a new playbook", async () => {
     const savedMessages = [{ role: "assistant", content: [] }];
     const { runInteractiveMode, mocks } = await setupWorkflowModule({
@@ -448,8 +488,222 @@ describe("agent workflows", () => {
 
     expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
-    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toContain(
-      "Continue exploring",
+    const resumePrompt = mocks.agentPrompt.mock.calls[0]?.[1] as string;
+    expect(resumePrompt).toContain("Continue exploring");
+    expect(resumePrompt).toContain("re-opened at");
+    expect(resumePrompt).toContain("You are resuming");
+  });
+
+  it("passes replay-recovery purpose to createAgent when replay gets stuck", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
     );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("replay recovery"),
+    );
+  });
+
+  it("includes 'browser is currently open' in the stuck-replay fallback prompt", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const fallbackPrompt = mocks.agentPrompt.mock.calls[0]?.[1] as string;
+    expect(fallbackPrompt).toContain("browser is currently open");
+  });
+
+  it("passes exploring purpose to createAgent in fresh interactive mode", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("exploring"),
+    );
+  });
+
+  it("passes resuming purpose to createAgent when resume=true", async () => {
+    const savedMessages = [{ role: "assistant", content: [] }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      savedMessages,
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      savedMessages,
+      true,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    expect(mocks.createAgent).toHaveBeenCalledWith(
+      expect.stringContaining("resuming"),
+    );
+  });
+
+  it("replay optimize message includes 'optimize updated playbook' in stderr", async () => {
+    const { runReplayMode } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+      rewriteText: "optimized rewrite",
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("optimize updated playbook");
+  });
+
+  it("collectAgentText receives replay recovery context including stuck step and combined steps", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const prompt = mocks.collectAgentText.mock.calls[0]?.[1] as string;
+    expect(prompt).toContain("replay broke at step 0");
+    expect(prompt).toContain("combined steps");
+    expect(prompt).toContain('"selector": "#recover"');
+    expect(prompt).toContain("prompt:rewrite-playbook.md");
+  });
+
+  it("collectAgentText receives the rewrite-playbook prompt in interactive optimization", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#buy" } },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const prompt = mocks.collectAgentText.mock.calls[0]?.[1] as string;
+    expect(prompt).toBe("prompt:rewrite-playbook.md");
+  });
+
+  // ─── makeStepExecutor (via replayPlaybook executor argument) ─────────────────
+
+  it("step executor calls the matching tool with replay id and returns its text", async () => {
+    const mockExecute = vi
+      .fn()
+      .mockResolvedValue({ content: [{ text: "clicked!" }] });
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: mockExecute }] as never,
+    );
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({
+      tool: "browser_click",
+      args: { selector: "#buy" },
+    });
+
+    expect(mockExecute).toHaveBeenCalledWith("replay", { selector: "#buy" });
+    expect(result).toBe("clicked!");
+  });
+
+  it("step executor returns an error message for an unknown tool", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode("https://example.com/schema.json", "https://example.com", [], [] as never);
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({ tool: "browser_unknown", args: {} });
+
+    expect(result).toBe("Error: unknown tool browser_unknown");
+  });
+
+  it("step executor returns empty string when tool result content has no text", async () => {
+    const mockExecute = vi
+      .fn()
+      .mockResolvedValue({ content: [{ type: "image" }] });
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: -1,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_screenshot", execute: mockExecute }] as never,
+    );
+
+    const executor = mocks.replayPlaybook.mock.calls[0]?.[1] as (step: {
+      tool: string;
+      args: Record<string, unknown>;
+    }) => Promise<string>;
+    const result = await executor({
+      tool: "browser_screenshot",
+      args: {},
+    });
+
+    expect(result).toBe("");
   });
 });

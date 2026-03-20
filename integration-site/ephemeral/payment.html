@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ephemeral Fixture: Payment</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f4e8;
+        color: #202218;
+      }
+      main {
+        max-width: 54rem;
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+      }
+      section {
+        background: #fbfcf7;
+        border: 1px solid #cad0bb;
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+      .field-grid {
+        display: grid;
+        gap: 0.75rem;
+      }
+      label {
+        display: grid;
+        gap: 0.25rem;
+      }
+      input,
+      button {
+        font: inherit;
+      }
+      input {
+        padding: 0.75rem;
+        border: 1px solid #aab391;
+        border-radius: 0.75rem;
+      }
+      button {
+        border: 0;
+        border-radius: 0.75rem;
+        padding: 0.9rem 1rem;
+        background: #4f6a1f;
+        color: white;
+        cursor: pointer;
+      }
+      .status {
+        min-height: 1.5rem;
+        color: #7f3f1e;
+      }
+      pre {
+        background: #1c1f19;
+        color: #eef5e1;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        min-height: 8rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body data-data-layer-mode="ephemeral">
+    <main>
+      <section>
+        <h1>Payment</h1>
+        <p>
+          The current page `dataLayer` has no memory of previous pages. The
+          agent needs to have captured earlier events already.
+        </p>
+      </section>
+
+      <section>
+        <div id="payment-actions">Loading payment form...</div>
+      </section>
+
+      <section>
+        <h2>Current page dataLayer</h2>
+        <pre id="events-view">[]</pre>
+      </section>
+    </main>
+
+    <script src="/shared/fixture-store.js"></script>
+    <script>
+      const store = window.fixtureStore;
+      store.bootPage({ viewSelector: "#events-view" });
+
+      store.mountAfterDelay(
+        "#payment-actions",
+        `
+          <div class="field-grid">
+            <label>
+              Card number
+              <input data-testid="card-number" inputmode="numeric" />
+            </label>
+            <label>
+              CVC
+              <input data-testid="card-cvc" inputmode="numeric" />
+            </label>
+            <label>
+              Cardholder name
+              <input data-testid="card-name" autocomplete="cc-name" />
+            </label>
+            <button data-testid="place-order" type="button">
+              Place order
+            </button>
+            <p class="status" id="payment-status"></p>
+          </div>
+        `,
+        300,
+      );
+
+      setTimeout(() => {
+        document
+          .querySelector('[data-testid="place-order"]')
+          .addEventListener("click", () => {
+            const cardNumber = document.querySelector(
+              '[data-testid="card-number"]',
+            ).value;
+            const cvc = document.querySelector('[data-testid="card-cvc"]').value;
+            const name = document.querySelector('[data-testid="card-name"]').value;
+            if (
+              cardNumber !== "4242424242424242" ||
+              cvc !== "123" ||
+              !name.trim()
+            ) {
+              store.setStatus(
+                "#payment-status",
+                "Use card 4242424242424242, CVC 123, and a cardholder name.",
+                "error",
+              );
+              return;
+            }
+
+            store.saveState({ cardNumber, name });
+            store.pushEvent(
+              {
+                $schema:
+                  "https://tracking-docs-demo.buchert.digital/schemas/web/purchase-event.json",
+                event: "purchase",
+                ecommerce: {
+                  transaction_id: "ORDER-3003",
+                  value: 59.98,
+                  currency: "USD",
+                  items: [
+                    {
+                      item_id: "SKU-EPH-1",
+                      item_name: "Signal Tee",
+                      price: 29.99,
+                      quantity: 2,
+                    },
+                  ],
+                },
+              },
+              "#events-view",
+            );
+
+            setTimeout(() => {
+              window.location.href =
+                "/ephemeral/transit.html?next=%2Fephemeral%2Fprofile.html&label=profile";
+            }, 250);
+          });
+      }, 300);
+    </script>
+  </body>
+</html>

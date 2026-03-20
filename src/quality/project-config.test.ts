@@ -26,6 +26,14 @@ describe("project verification config", () => {
     expect(hook).toContain("npm run quality:staged");
   });
 
+  it("defines a husky pre-push hook that runs local verification", () => {
+    const hookPath = join(ROOT, ".husky", "pre-push");
+    expect(existsSync(hookPath)).toBe(true);
+
+    const hook = readFileSync(hookPath, "utf8");
+    expect(hook).toContain("npm run verify:local");
+  });
+
   it("defines mutation-testing scripts and stryker config for deterministic core files", () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, "package.json"), "utf8"),
@@ -89,6 +97,33 @@ describe("project verification config", () => {
     expect(pkg.devDependencies?.["@vitest/coverage-v8"]).toBeTruthy();
   });
 
+  it("defines a dedicated integration-test script and config", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.["test:integration"]).toBe(
+      "node --import tsx src/integration/run-suite.ts -- vitest run -c vitest.integration.config.ts",
+    );
+    expect(pkg.scripts?.["test:integration:llm"]).toBe(
+      "node --import tsx src/integration/run-suite.ts -- vitest run -c vitest.integration.config.ts src/integration/agent-assisted.integration.test.ts",
+    );
+    expect(pkg.scripts?.["verify:local"]).toBe(
+      "npm run verify && env -u AGENT_BROWSER_HEADED npm run test:integration && env -u AGENT_BROWSER_HEADED npm run test:integration:llm",
+    );
+    expect(pkg.scripts?.["verify:local:headed"]).toBe(
+      "npm run verify && AGENT_BROWSER_HEADED=true npm run test:integration && AGENT_BROWSER_HEADED=true npm run test:integration:llm",
+    );
+    expect(existsSync(join(ROOT, "vitest.integration.config.ts"))).toBe(true);
+    const defaultVitestConfig = readFileSync(
+      join(ROOT, "vitest.config.ts"),
+      "utf8",
+    );
+    expect(defaultVitestConfig).toContain("src/**/*.integration.test.ts");
+  });
+
   it("defines CI workflows for quality and mutation testing", () => {
     const workflowPath = join(ROOT, ".github", "workflows", "quality.yml");
     expect(existsSync(workflowPath)).toBe(true);
@@ -96,6 +131,7 @@ describe("project verification config", () => {
     const workflow = readFileSync(workflowPath, "utf8");
     expect(workflow).toContain("npm run verify");
     expect(workflow).toContain("npm run test:crap");
+    expect(workflow).not.toContain("test:integration");
 
     const mutationWorkflowPath = join(
       ROOT,
@@ -110,5 +146,27 @@ describe("project verification config", () => {
     expect(mutationWorkflow).toContain("npm run test:mutation");
     expect(mutationWorkflow).toContain("reports/stryker-incremental.json");
     expect(mutationWorkflow).toContain("actions/cache");
+    expect(mutationWorkflow).not.toContain("test:integration");
+  });
+
+  it("defines demo hosting and local demo scripts", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.["demo:serve"]).toBe(
+      "node --import tsx src/integration/serve-demo.ts",
+    );
+
+    const workflowPath = join(ROOT, ".github", "workflows", "demo-pages.yml");
+    expect(existsSync(workflowPath)).toBe(true);
+
+    const workflow = readFileSync(workflowPath, "utf8");
+    expect(workflow).toContain("actions/configure-pages");
+    expect(workflow).toContain("actions/upload-pages-artifact");
+    expect(workflow).toContain("actions/deploy-pages");
+    expect(workflow).toContain("integration-site");
   });
 });

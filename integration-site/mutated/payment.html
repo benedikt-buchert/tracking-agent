@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mutated Fixture: Payment</title>
+        <style>
+            body {
+                font-family: Georgia, serif;
+                margin: 0;
+                padding: 2rem;
+                background: linear-gradient(180deg, #f0f6ff, #ffffff);
+                color: #122033;
+            }
+            .shell {
+                max-width: 56rem;
+                margin: 0 auto;
+                display: grid;
+                gap: 1rem;
+            }
+            .panel {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #c9d7ea;
+                border-radius: 1.25rem;
+                padding: 1rem;
+            }
+            .form-stack {
+                display: grid;
+                gap: 0.75rem;
+            }
+            label {
+                display: grid;
+                gap: 0.25rem;
+            }
+            input,
+            button {
+                font: inherit;
+            }
+            input {
+                padding: 0.75rem;
+                border: 1px solid #aac2de;
+                border-radius: 0.9rem;
+            }
+            button {
+                border: 0;
+                border-radius: 0.9rem;
+                padding: 0.9rem 1rem;
+                background: #3668a1;
+                color: white;
+                cursor: pointer;
+            }
+            .status {
+                min-height: 1.5rem;
+                color: #8f321d;
+            }
+            pre {
+                background: #102132;
+                color: #dcefff;
+                padding: 1rem;
+                border-radius: 0.75rem;
+                min-height: 8rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body data-data-layer-mode="rehydrate">
+        <div class="shell">
+            <div class="panel">
+                <h1>Billing checkpoint</h1>
+            </div>
+
+            <div class="panel">
+                <div id="payment-actions">Loading billing form...</div>
+            </div>
+
+            <div class="panel">
+                <h2>Persisted dataLayer state</h2>
+                <pre id="events-view">[]</pre>
+            </div>
+        </div>
+
+        <script src="/shared/fixture-store.js"></script>
+        <script>
+            const store = window.fixtureStore;
+            store.bootPage({ viewSelector: "#events-view" });
+
+            store.mountAfterDelay(
+                "#payment-actions",
+                `
+          <div class="form-stack">
+            <label>
+              PAN
+              <input data-testid="pan-field" inputmode="numeric" />
+            </label>
+            <label>
+              Security code
+              <input data-testid="security-code" inputmode="numeric" />
+            </label>
+            <label>
+              Full name
+              <input data-testid="cardholder" />
+            </label>
+            <button data-testid="submit-order" type="button">
+              Confirm payment
+            </button>
+            <p class="status" id="payment-status"></p>
+          </div>
+        `,
+                320,
+            );
+
+            setTimeout(() => {
+                document
+                    .querySelector('[data-testid="submit-order"]')
+                    .addEventListener("click", () => {
+                        const cardNumber = document.querySelector(
+                            '[data-testid="pan-field"]',
+                        ).value;
+                        const cvc = document.querySelector(
+                            '[data-testid="security-code"]',
+                        ).value;
+                        const name = document.querySelector(
+                            '[data-testid="cardholder"]',
+                        ).value;
+                        if (
+                            cardNumber !== "4242424242424242" ||
+                            cvc !== "123" ||
+                            !name.trim()
+                        ) {
+                            store.setStatus(
+                                "#payment-status",
+                                "Use the test card number, security code 123, and a full name.",
+                                "error",
+                            );
+                            return;
+                        }
+
+                        store.saveState({ cardNumber, name });
+                        store.pushEvent(
+                            {
+                                $schema:
+                                    "https://tracking-docs-demo.buchert.digital/schemas/web/purchase-event.json",
+                                event: "purchase",
+                                ecommerce: {
+                                    transaction_id: "ORDER-2002",
+                                    value: 29.99,
+                                    currency: "USD",
+                                    items: [
+                                        {
+                                            item_id: "SKU-MUT-1",
+                                            item_name: "Signal Cap",
+                                            price: 29.99,
+                                            quantity: 1,
+                                        },
+                                    ],
+                                },
+                            },
+                            "#events-view",
+                        );
+
+                        setTimeout(() => {
+                            window.location.href =
+                                "/mutated/transit.html?next=%2Fmutated%2Fprofile.html&label=profile";
+                        }, 260);
+                    });
+            }, 320);
+        </script>
+    </body>
+</html>

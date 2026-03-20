@@ -2,9 +2,19 @@ import { execFile } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import type { EventSchema } from "../schema.js";
+import {
+  validateEvent,
+  defaultLoadSchema,
+} from "../validation/index.js";
+import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
 
-export const VALIDATOR_BASE_URL =
-  process.env.VALIDATOR_URL ?? "http://localhost:3000";
+export type { ValidationResult };
+export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
+const seenPageBoundaryWarnings = new Set<string>();
+
+export function clearSeenPageBoundaryWarnings(): void {
+  seenPageBoundaryWarnings.clear();
+}
 
 export type BrowserFn = (args: string[]) => Promise<string>;
 
@@ -70,6 +80,57 @@ export function parseBrowserJsonArray(text: string): unknown[] {
   }
 }
 
+function parseInterceptorObjectResult(record: Record<string, unknown>): {
+  events: unknown[];
+  recoveredCount: number;
+  recoveredEvents: unknown[];
+} {
+  return {
+    events: Array.isArray(record["events"]) ? record["events"] : [],
+    recoveredCount:
+      typeof record["recoveredCount"] === "number"
+        ? record["recoveredCount"]
+        : 0,
+    recoveredEvents: Array.isArray(record["recoveredEvents"])
+      ? record["recoveredEvents"]
+      : [],
+  };
+}
+
+function parseDrainedInterceptorResult(text: string): {
+  events: unknown[];
+  recoveredCount: number;
+  recoveredEvents: unknown[];
+} {
+  try {
+    const parsed = JSON.parse(text || "[]");
+    const result = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+
+    if (Array.isArray(result)) {
+      return { events: result, recoveredCount: 0, recoveredEvents: [] };
+    }
+
+    if (result !== null && typeof result === "object") {
+      return parseInterceptorObjectResult(result as Record<string, unknown>);
+    }
+
+    return { events: [], recoveredCount: 0, recoveredEvents: [] };
+  } catch {
+    return { events: [], recoveredCount: 0, recoveredEvents: [] };
+  }
+}
+
+function recoveredEventNames(events: unknown[]): string[] {
+  const names = new Set<string>();
+  for (const event of events) {
+    if (event !== null && typeof event === "object") {
+      const name = (event as Record<string, unknown>)["event"];
+      if (typeof name === "string") names.add(name);
+    }
+  }
+  return [...names];
+}
+
 export async function getCurrentUrl(
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<string> {
@@ -77,11 +138,6 @@ export async function getCurrentUrl(
     () => "",
   );
   return out.trim().replace(/^"|"$/g, "");
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
 }
 
 export interface EventValidationResult {
@@ -114,100 +170,13 @@ export function resolveSchemaForEvent(
   };
 }
 
-// ─── formatAjvError ───────────────────────────────────────────────────────────
-
-export function formatAjvError(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e === null || typeof e !== "object") return JSON.stringify(e);
-
-  const { keyword, params, message, prefix } = parseAjvErrorObject(
-    e as Record<string, unknown>,
-  );
-  return (
-    formatAjvKeywordError(keyword, params, prefix) ??
-    (message ? `${prefix}${message}` : JSON.stringify(e))
-  );
-}
-
-function parseAjvErrorObject(err: Record<string, unknown>): {
-  keyword: string;
-  params: Record<string, unknown>;
-  message: string;
-  prefix: string;
-} {
-  const instancePath =
-    typeof err["instancePath"] === "string" ? err["instancePath"] : "";
-  return {
-    keyword: typeof err["keyword"] === "string" ? err["keyword"] : "",
-    params:
-      err["params"] !== null && typeof err["params"] === "object"
-        ? (err["params"] as Record<string, unknown>)
-        : {},
-    message: typeof err["message"] === "string" ? err["message"] : "",
-    prefix: instancePath ? `${instancePath} ` : "",
-  };
-}
-
-function formatAjvKeywordError(
-  keyword: string,
-  params: Record<string, unknown>,
-  prefix: string,
-): string | undefined {
-  if (keyword === "const") {
-    const allowedValue = params["allowedValue"];
-    if (allowedValue !== undefined) {
-      return `${prefix}must equal ${JSON.stringify(allowedValue)}`;
-    }
-    return undefined;
-  }
-
-  if (keyword === "required") {
-    const missingProperty = params["missingProperty"];
-    return typeof missingProperty === "string"
-      ? `Missing required property: ${missingProperty}`
-      : undefined;
-  }
-
-  if (keyword === "additionalProperties") {
-    const additionalProperty = params["additionalProperty"];
-    return typeof additionalProperty === "string"
-      ? `Unexpected property: ${additionalProperty}`
-      : undefined;
-  }
-
-  return undefined;
-}
-
-// ─── validateEvent ────────────────────────────────────────────────────────────
-
-export async function validateEvent(
-  event: unknown,
-  schemaUrl: string,
-  fetchFn: typeof fetch = fetch,
-): Promise<ValidationResult> {
-  try {
-    const url = `${VALIDATOR_BASE_URL}/v1/validate/remote?schema_url=${encodeURIComponent(schemaUrl)}`;
-    const res = await fetchFn(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(event),
-    });
-    const json = (await res.json()) as { valid: boolean; errors: unknown[] };
-    const errors = (json.errors ?? []).map(formatAjvError);
-    return { valid: json.valid, errors };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { valid: false, errors: [`Validator unreachable: ${msg}`] };
-  }
-}
-
 // ─── validateAll ──────────────────────────────────────────────────────────────
 
 export async function validateAll(
   events: unknown[],
   eventSchemas: EventSchema[],
   entryUrl: string,
-  fetchFn: typeof fetch = fetch,
+  loadSchemaFn: LoadSchemaFn = defaultLoadSchema,
 ): Promise<EventValidationResult[]> {
   const results: EventValidationResult[] = [];
   for (let i = 0; i < events.length; i++) {
@@ -219,7 +188,7 @@ export async function validateAll(
     );
     // Only validate events that match a known schema — skip GTM internals and unrecognised events
     if (schemaUrl === entryUrl) continue;
-    const result = await validateEvent(event, schemaUrl, fetchFn);
+    const result = await validateEvent(event, schemaUrl, loadSchemaFn);
     results.push({ index: i, event, eventName, schemaUrl, result });
   }
   return results;
@@ -487,29 +456,66 @@ export async function captureDataLayer(
 // If the page has changed, the interceptor is gone — this auto-detects that,
 // re-installs, and returns the full dataLayer from the new page.
 //
-// The injected JS is evaluated directly in the browser context and drained after
-// each action so post-navigation events are not lost.
+// The interceptor also mirrors new pushes into sessionStorage, so same-origin
+// navigations do not lose events emitted immediately before unload.
 
 export async function drainInterceptor(
   browser: BrowserFn = defaultBrowserFn,
 ): Promise<unknown[]> {
   const js = [
     "(function() {",
+    `  var storageKey = ${JSON.stringify(DATA_LAYER_BRIDGE_STORAGE_KEY)};`,
+    "  var isFreshInstall = !window.__dl_intercepted;",
     "  if (!window.__dl_intercepted) {",
     "    window.__dl_buffer = [];",
     "    var dl = window.dataLayer;",
     "    if (!Array.isArray(dl)) { window.dataLayer = []; dl = window.dataLayer; }",
     "    for (var i = 0; i < dl.length; i++) { window.__dl_buffer.push(dl[i]); }",
     "    var orig = dl.push;",
-    "    dl.push = function() { for (var j = 0; j < arguments.length; j++) { window.__dl_buffer.push(arguments[j]); } return orig.apply(dl, arguments); };",
+    "    dl.push = function() {",
+    "      for (var j = 0; j < arguments.length; j++) {",
+    "        window.__dl_buffer.push(arguments[j]);",
+    "        try {",
+    "          var persisted = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+    "          persisted.push(arguments[j]);",
+    "          sessionStorage.setItem(storageKey, JSON.stringify(persisted));",
+    "        } catch (e) {}",
+    "      }",
+    "      return orig.apply(dl, arguments);",
+    "    };",
     "    window.__dl_intercepted = true;",
     "  }",
     "  var events = window.__dl_buffer.splice(0);",
-    "  return JSON.stringify(events);",
+    "  var recoveredCount = 0;",
+    "  var recoveredEvents = [];",
+    "  if (isFreshInstall) {",
+    "    try {",
+    "      var persistedEvents = JSON.parse(sessionStorage.getItem(storageKey) || '[]');",
+    "      sessionStorage.removeItem(storageKey);",
+    "      for (var k = 0; k < persistedEvents.length; k++) { events.push(persistedEvents[k]); recoveredEvents.push(persistedEvents[k]); }",
+    "      recoveredCount = persistedEvents ? persistedEvents.length : 0;",
+    "    } catch (e) {}",
+    "  } else {",
+    "    try { sessionStorage.removeItem(storageKey); } catch (e) {}",
+    "  }",
+    "  return JSON.stringify({ events: events, recoveredCount: recoveredCount, recoveredEvents: recoveredEvents });",
     "})()",
   ].join(" ");
   const out = await runBrowserEval(js, browser).catch(() => "");
-  return parseBrowserJsonArray(out);
+  const result = parseDrainedInterceptorResult(out);
+  if (result.recoveredCount > 0) {
+    const warningKey = JSON.stringify(result.recoveredEvents);
+    if (!seenPageBoundaryWarnings.has(warningKey)) {
+      seenPageBoundaryWarnings.add(warningKey);
+      const eventNames = recoveredEventNames(result.recoveredEvents);
+      const namesSuffix =
+        eventNames.length > 0 ? `: ${eventNames.join(", ")}` : "";
+      process.stderr.write(
+        `Warning: recovered ${result.recoveredCount} dataLayer event(s) across a page navigation boundary${namesSuffix}. These were fired while leaving the page, so GTM timing may be unreliable on the live site.\n`,
+      );
+    }
+  }
+  return result.events;
 }
 
 // ─── Session persistence ──────────────────────────────────────────────────────

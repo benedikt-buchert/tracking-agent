@@ -204,6 +204,22 @@ describe("checkApiKey", () => {
     delete process.env["GOOGLE_APPLICATION_CREDENTIALS"];
     expect(hasVertexAdcCredentials(() => false, "/tmp/no-home")).toBe(false);
   });
+
+  it("shows ADC credentials not found message when project and location are set but credentials file does not exist", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_PROJECT: "my-project",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+      GOOGLE_APPLICATION_CREDENTIALS:
+        "/nonexistent/path/to/credentials-xyz-123.json",
+    };
+    delete process.env["GOOGLE_CLOUD_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/ADC credentials not found/);
+    expect(error.message).not.toMatch(/Missing env vars/);
+  });
 });
 
 describe("hasVertexAdcCredentials", () => {
@@ -297,6 +313,12 @@ describe("createAgent", () => {
     expect(() => createAgent("replay recovery")).toThrow(/replay recovery/i);
   });
 
+  it("uses the default purpose in missing-credential errors when no purpose is given", () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_OAUTH_TOKEN"];
+    expect(() => createAgent()).toThrow(/agent-assisted exploration/i);
+  });
+
   it("registers all tools", () => {
     const agent = createAgent();
     const toolNames = agent.state.tools.map((t) => t.name);
@@ -361,6 +383,25 @@ describe("buildAgentTools", () => {
     expect(originalClick).toBeDefined();
     expect(builtClick).not.toBe(originalClick);
     expect(builtEval).toBe(originalEval);
+  });
+
+  it("wraps all polled tool names (browser_navigate, browser_fill, browser_find, browser_wait, request_human_input)", () => {
+    // Kills StringLiteral mutations on POLLED_TOOL_NAMES entries
+    const { tools } = buildAgentTools([], false);
+    const polledNames = [
+      "browser_navigate",
+      "browser_fill",
+      "browser_find",
+      "browser_wait",
+      "request_human_input",
+    ];
+    for (const name of polledNames) {
+      const original = allTools.find((t) => t.name === name);
+      const built = tools.find((t) => t.name === name);
+      expect(built).toBeDefined();
+      expect(original).toBeDefined();
+      expect(built).not.toBe(original);
+    }
   });
 
   it("in headless mode, request_human_input resolves immediately without reading stdin", async () => {

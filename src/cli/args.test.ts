@@ -42,6 +42,14 @@ describe("parseArgs", () => {
     expect(parseArgs(["-h"]).help).toBe(true);
   });
 
+  it("returns all boolean fields as false in the --help shortcircuit", () => {
+    const result = parseArgs(["--help"]);
+    expect(result.help).toBe(true);
+    expect(result.resume).toBe(false);
+    expect(result.replay).toBe(false);
+    expect(result.headless).toBe(false);
+  });
+
   it("returns help:false when no help flag", () => {
     expect(parseArgs([]).help).toBe(false);
   });
@@ -123,6 +131,28 @@ describe("parseArgs", () => {
     expect(result.schemaUrl).toBe("https://example.com/schema.json");
     expect(result.targetUrl).toBeUndefined();
   });
+
+  it("parses --schemas-dir into schemasDir", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--schemas-dir",
+      "./local-schemas",
+    ]);
+    expect(result.schemasDir).toBe("./local-schemas");
+  });
+
+  it("returns undefined for schemasDir when --schemas-dir is absent", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+    ]);
+    expect(result.schemasDir).toBeUndefined();
+  });
 });
 
 describe("resolveArgs", () => {
@@ -159,28 +189,39 @@ describe("resolveArgs", () => {
   });
 
   it("prompts for missing --schema", async () => {
-    const prompted: string[] = [];
-    const prompt = async (q: string) => {
-      prompted.push(q);
-      return "https://prompted-schema.json";
-    };
+    const prompt = vi.fn().mockResolvedValue("https://prompted-schema.json");
     const result = await resolveArgs(["--url", "https://mysite.com"], prompt);
     expect(result?.schemaUrl).toBe("https://prompted-schema.json");
-    expect(prompted).toHaveLength(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Schema URL"));
   });
 
   it("prompts for missing --url", async () => {
-    const prompted: string[] = [];
-    const prompt = async (q: string) => {
-      prompted.push(q);
-      return "https://prompted-url.com";
-    };
+    const prompt = vi.fn().mockResolvedValue("https://prompted-url.com");
     const result = await resolveArgs(
       ["--schema", "https://example.com/schema.json"],
       prompt,
     );
     expect(result?.targetUrl).toBe("https://prompted-url.com");
-    expect(prompted).toHaveLength(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Target URL"));
+  });
+
+  it("resolves successfully in headless mode when both --schema and --url are provided", async () => {
+    const result = await resolveArgs([
+      "--headless",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://example.com",
+    ]);
+    expect(result).toEqual({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: true,
+    });
   });
 
   it("prompts for both when no flags are provided", async () => {
@@ -317,6 +358,24 @@ describe("resolveArgs", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("does not read the saved file when both --schema and --url are already provided in replay mode", async () => {
+    const readFileFn = vi.fn();
+    const result = await resolveArgs(
+      [
+        "--replay",
+        "--schema",
+        "https://example.com/s.json",
+        "--url",
+        "https://example.com",
+      ],
+      undefined,
+      readFileFn,
+    );
+    expect(readFileFn).not.toHaveBeenCalled();
+    expect(result?.schemaUrl).toBe("https://example.com/s.json");
+    expect(result?.targetUrl).toBe("https://example.com");
+  });
+
   it("falls back to prompting when loading the saved file fails", async () => {
     const prompt = vi
       .fn()
@@ -334,5 +393,65 @@ describe("resolveArgs", () => {
       headless: false,
     });
     expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("prompts for schemaUrl when replay file has no schemaUrl but has targetUrl", async () => {
+    // Covers L89 branch[2]: both parsed.schemaUrl and saved.schemaUrl are missing
+    const prompt = vi.fn().mockResolvedValue("https://prompted-schema.json");
+    const readFileFn = vi.fn().mockResolvedValue(
+      JSON.stringify({ targetUrl: "https://saved-site.com", steps: [] }),
+    );
+
+    const result = await resolveArgs(["--replay"], prompt, readFileFn);
+
+    expect(result?.schemaUrl).toBe("https://prompted-schema.json");
+    expect(result?.targetUrl).toBe("https://saved-site.com");
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Schema URL"));
+  });
+
+  it("uses CLI --url over saved targetUrl in replay mode", async () => {
+    // Covers L93 branch[0]: parsed.targetUrl is set
+    const readFileFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        schemaUrl: "https://saved-schema.json",
+        targetUrl: "https://saved-site.com",
+        steps: [],
+      }),
+    );
+
+    const result = await resolveArgs(
+      ["--replay", "--url", "https://cli-site.com"],
+      undefined,
+      readFileFn,
+    );
+
+    expect(result?.targetUrl).toBe("https://cli-site.com");
+  });
+
+  it("passes --schemas-dir through to the resolved CliArgs", async () => {
+    const result = await resolveArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--schemas-dir",
+      "./local-schemas",
+    ]);
+    expect(result?.schemasDir).toBe("./local-schemas");
+  });
+
+  it("returns null in headless mode when --schema is provided but --url is missing", async () => {
+    // Covers L118 branch[2]: headless=true, schemaUrl provided, targetUrl missing
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const result = await resolveArgs([
+      "--headless",
+      "--schema",
+      "https://example.com/schema.json",
+    ]);
+    expect(result).toBeNull();
+    expect(stderr).toHaveBeenCalled();
+    stderr.mockRestore();
   });
 });

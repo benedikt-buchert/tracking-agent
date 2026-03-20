@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ephemeral Fixture: Checkout</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f4e8;
+        color: #202218;
+      }
+      main {
+        max-width: 54rem;
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+      }
+      section {
+        background: #fbfcf7;
+        border: 1px solid #cad0bb;
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+      .field-grid {
+        display: grid;
+        gap: 0.75rem;
+      }
+      label {
+        display: grid;
+        gap: 0.25rem;
+      }
+      input,
+      button {
+        font: inherit;
+      }
+      input {
+        padding: 0.75rem;
+        border: 1px solid #aab391;
+        border-radius: 0.75rem;
+      }
+      button {
+        border: 0;
+        border-radius: 0.75rem;
+        padding: 0.9rem 1rem;
+        background: #4f6a1f;
+        color: white;
+        cursor: pointer;
+      }
+      button[data-variant="warn"] {
+        background: #965638;
+      }
+      .status {
+        min-height: 1.5rem;
+        color: #7f3f1e;
+      }
+      pre {
+        background: #1c1f19;
+        color: #eef5e1;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        min-height: 8rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body data-data-layer-mode="ephemeral">
+    <main>
+      <section>
+        <h1>Checkout</h1>
+        <p>
+          Same selectors as the deterministic flow, but the current page starts
+          with an empty `dataLayer`.
+        </p>
+      </section>
+
+      <section>
+        <div id="checkout-actions">Loading shipping form...</div>
+      </section>
+
+      <section>
+        <h2>Current page dataLayer</h2>
+        <pre id="events-view">[]</pre>
+      </section>
+    </main>
+
+    <script src="/shared/fixture-store.js"></script>
+    <script>
+      const store = window.fixtureStore;
+      store.bootPage({ viewSelector: "#events-view" });
+
+      store.mountAfterDelay(
+        "#checkout-actions",
+        `
+          <button
+            data-testid="broken-cart"
+            data-variant="warn"
+            type="button"
+          >
+            Add broken cart event
+          </button>
+          <div class="field-grid">
+            <label>
+              Email
+              <input
+                data-testid="email"
+                type="email"
+                autocomplete="email"
+              />
+            </label>
+            <label>
+              Postal code
+              <input data-testid="postal-code" inputmode="numeric" />
+            </label>
+            <label>
+              State
+              <input data-testid="state" maxlength="2" />
+            </label>
+            <button data-testid="continue-to-payment" type="button">
+              Continue to payment
+            </button>
+            <p class="status" id="checkout-status"></p>
+          </div>
+        `,
+        300,
+      );
+
+      setTimeout(() => {
+        document
+          .querySelector('[data-testid="broken-cart"]')
+          .addEventListener("click", () => {
+            store.pushEvent(
+              {
+                $schema:
+                  "https://tracking-docs-demo.buchert.digital/schemas/web/add-to-cart-event.json",
+                event: "add_to_cart",
+                ecommerce: {
+                  currency: "USD",
+                  items: [
+                    {
+                      item_id: 42,
+                      item_name: "Broken Cart Item",
+                      quantity: "2",
+                    },
+                  ],
+                },
+              },
+              "#events-view",
+            );
+            store.setStatus(
+              "#checkout-status",
+              "Broken cart event sent.",
+              "warn",
+            );
+          });
+
+        document
+          .querySelector('[data-testid="continue-to-payment"]')
+          .addEventListener("click", () => {
+            const email = document.querySelector('[data-testid="email"]').value;
+            const postalCode = document.querySelector(
+              '[data-testid="postal-code"]',
+            ).value;
+            const state = document.querySelector('[data-testid="state"]').value;
+
+            const valid =
+              /.+@.+\..+/.test(email) &&
+              /^[0-9]{5}$/.test(postalCode) &&
+              /^[A-Z]{2}$/.test(state);
+            if (!valid) {
+              store.setStatus(
+                "#checkout-status",
+                "Provide a valid email, 5-digit US postal code, and 2-letter state.",
+                "error",
+              );
+              return;
+            }
+
+            store.saveState({ email, postalCode, state });
+            store.pushEvent(
+              {
+                $schema:
+                  "https://tracking-docs-demo.buchert.digital/schemas/web/conditional-event.json",
+                event: "address_submitted",
+                country: "US",
+                postal_code: postalCode,
+                state,
+              },
+              "#events-view",
+            );
+
+            setTimeout(() => {
+              window.location.href =
+                "/ephemeral/transit.html?next=%2Fephemeral%2Fpayment.html&label=payment";
+            }, 250);
+          });
+      }, 300);
+    </script>
+  </body>
+</html>

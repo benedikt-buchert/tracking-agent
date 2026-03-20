@@ -18,6 +18,23 @@ describe("loadEnvIfPresent", () => {
 });
 
 describe("handleMainError", () => {
+  it("uses process.stderr.write when no write function is provided", () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
+
+    handleMainError(new Error("default write test"));
+
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("default write test"),
+    );
+    stderrSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
   it("writes configuration errors without a prefixed label", () => {
     const write = vi.fn();
     const exit = vi.fn(() => {

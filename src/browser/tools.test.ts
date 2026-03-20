@@ -427,6 +427,56 @@ describe("createScreenshotTool", () => {
 
 // ─── createFindTool ───────────────────────────────────────────────────────────
 describe("createFindTool", () => {
+  it("uses direct DOM eval for click by testid", async () => {
+    const browserFn = mockBrowser("✓ Done");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", {
+      locator: "testid",
+      value: "start-checkout",
+      action: "click",
+    });
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      expect.stringContaining("start-checkout"),
+    ]);
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      expect.stringContaining("sessionStorage"),
+    ]);
+  });
+
+  it("guards sessionStorage write with __dl_intercepted when interceptor is active", async () => {
+    const browserFn = mockBrowser("✓ Done");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", {
+      locator: "testid",
+      value: "add-to-cart",
+      action: "click",
+    });
+    const js = vi.mocked(browserFn).mock.calls[0][0][1] as string;
+    // sessionStorage write must be conditional on interceptor not being installed,
+    // so the same event is not written twice when drainInterceptor is also active
+    expect(js).toMatch(/!window\.__dl_intercepted/);
+    const sessionStorageIdx = js.indexOf("sessionStorage.setItem");
+    const guardIdx = js.indexOf("!window.__dl_intercepted");
+    expect(guardIdx).toBeLessThan(sessionStorageIdx);
+  });
+
+  it("uses direct DOM eval for fill by testid", async () => {
+    const browserFn = mockBrowser("✓ Done");
+    const tool = createFindTool(browserFn);
+    await tool.execute("1", {
+      locator: "testid",
+      value: "email",
+      action: "fill",
+      fill_text: "buyer@example.com",
+    });
+    expect(browserFn).toHaveBeenCalledWith([
+      "eval",
+      expect.stringContaining("buyer@example.com"),
+    ]);
+  });
+
   it("builds correct command for click by role", async () => {
     const browserFn = mockBrowser("clicked");
     const tool = createFindTool(browserFn);
@@ -496,6 +546,54 @@ describe("createFindTool", () => {
       fill_text: "",
     });
     expect(browserFn).toHaveBeenCalledWith(["find", "label", "Email", "fill"]);
+  });
+
+  it("falls back to 'Done' when testid click returns empty text", async () => {
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "", capturedEvents: [] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("Done");
+  });
+
+  it("sets timingRiskWarning true when testid click captures events", async () => {
+    const event = { event: "add_to_cart" };
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "✓ Done", capturedEvents: [event] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect(result.details["timingRiskWarning"]).toBe(true);
+    expect(result.details["capturedEvents"]).toEqual([event]);
+  });
+
+  it("sets timingRiskWarning false when testid click captures no events", async () => {
+    const tool = createFindTool(
+      mockBrowser(JSON.stringify({ text: "✓ Done", capturedEvents: [] })),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect(result.details["timingRiskWarning"]).toBe(false);
+  });
+
+  it("returns the raw JSON primitive string when browser eval returns a JSON number", async () => {
+    const tool = createFindTool(mockBrowser("42"));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("42");
   });
 });
 
@@ -600,11 +698,106 @@ describe("requestHumanInputTool", () => {
 // ─── createDataLayerInterceptor ───────────────────────────────────────────────
 
 describe("createDataLayerInterceptor", () => {
+  const noSettle = { settleMs: 0 };
+
+  it("does not append to accumulator when tool result capturedEvents is empty", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: { capturedEvents: [] },
+      }),
+    });
+
+    await tool.execute("1", {});
+
+    expect(acc).toHaveLength(0);
+  });
+
+  it("does not append to accumulator when tool result details has no capturedEvents", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_navigate",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {}, // no capturedEvents key
+      }),
+    });
+
+    await expect(tool.execute("1", {})).resolves.toBeDefined();
+    expect(acc).toHaveLength(0);
+  });
+
+  it("appends to accumulator when tool result capturedEvents is non-empty", async () => {
+    const acc: unknown[] = [];
+    const event = { event: "add_to_cart" };
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: { capturedEvents: [event] },
+      }),
+    });
+
+    await tool.execute("1", {});
+
+    expect(acc).toEqual([event]);
+  });
+
+  it("drains events both before and after a wrapped tool executes", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValueOnce(JSON.stringify([{ event: "before" }]))
+      .mockResolvedValueOnce(JSON.stringify([{ event: "after" }]))
+      .mockResolvedValueOnce(JSON.stringify([])) as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(
+      acc,
+      interceptBrowserFn,
+      noSettle,
+    );
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@e1" });
+
+    expect(acc).toEqual([{ event: "before" }, { event: "after" }]);
+  });
+
   it("appends drained events to accumulator after the wrapped tool executes", async () => {
     const acc: unknown[] = [];
     const events = [{ event: "page_view" }];
-    const interceptBrowserFn = mockBrowser(JSON.stringify(events));
-    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValueOnce("[]")
+      .mockResolvedValueOnce(JSON.stringify(events))
+      .mockResolvedValueOnce("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(
+      acc,
+      interceptBrowserFn,
+      noSettle,
+    );
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
     await tool.execute("1", { url: "https://example.com" });
     expect(acc).toEqual(events);
@@ -614,11 +807,17 @@ describe("createDataLayerInterceptor", () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
       .fn()
+      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(
         JSON.stringify([{ event: "add_to_cart" }]),
       ) as unknown as BrowserFn;
-    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const intercept = createDataLayerInterceptor(
+      acc,
+      interceptBrowserFn,
+      noSettle,
+    );
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
     await tool.execute("1", { url: "https://a.com" });
     await tool.execute("1", { url: "https://b.com" });
@@ -627,7 +826,11 @@ describe("createDataLayerInterceptor", () => {
 
   it("returns the original tool result unchanged", async () => {
     const acc: unknown[] = [];
-    const intercept = createDataLayerInterceptor(acc, mockBrowser("[]"));
+    const intercept = createDataLayerInterceptor(
+      acc,
+      mockBrowser("[]"),
+      noSettle,
+    );
     const tool = intercept(
       createNavigateTool(mockBrowser("Navigation complete")),
     );
@@ -642,7 +845,11 @@ describe("createDataLayerInterceptor", () => {
     const failingBrowserFn = vi
       .fn()
       .mockRejectedValue(new Error("timeout")) as unknown as BrowserFn;
-    const intercept = createDataLayerInterceptor(acc, failingBrowserFn);
+    const intercept = createDataLayerInterceptor(
+      acc,
+      failingBrowserFn,
+      noSettle,
+    );
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
     await expect(
       tool.execute("1", { url: "https://example.com" }),
@@ -654,16 +861,208 @@ describe("createDataLayerInterceptor", () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
       .fn()
+      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
+      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(
         JSON.stringify([{ event: "click" }]),
       ) as unknown as BrowserFn;
-    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn);
+    const intercept = createDataLayerInterceptor(
+      acc,
+      interceptBrowserFn,
+      noSettle,
+    );
     const navigate = intercept(createNavigateTool(mockBrowser("ok")));
     const click = intercept(createClickTool(mockBrowser("ok")));
     await navigate.execute("1", { url: "https://example.com" });
     await click.execute("1", { selector: "@e1" });
     expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
+  });
+
+  it("captures delayed click events during the settle window", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValueOnce("[]")
+      .mockResolvedValueOnce("[]")
+      .mockResolvedValueOnce("[]")
+      .mockResolvedValueOnce("[]")
+      .mockResolvedValueOnce(JSON.stringify([{ event: "delayed_click" }]))
+      .mockResolvedValueOnce("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 250,
+      settleIntervalMs: 50,
+      sleepFn,
+    });
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@e1" });
+
+    expect(sleepFn).toHaveBeenCalledTimes(5);
+    expect(sleepFn).toHaveBeenCalledWith(50);
+    expect(acc).toEqual([{ event: "delayed_click" }]);
+  });
+
+  it("does not double-count an event returned by both capturedEvents and drainInterceptor", async () => {
+    // Regression: the click tool's push override previously always wrote to sessionStorage,
+    // even when drainInterceptor's bridge was also active. This caused the same event to
+    // appear in both capturedEvents (from the tool result) and the post-tool drain, making
+    // recoveredCount=2 for a single event and warning "2 dataLayer event(s)" with one name.
+    const acc: unknown[] = [];
+    const addToCart = { event: "add_to_cart" };
+
+    // Simulate: pre-drain returns nothing, post-drain returns the same event that the
+    // tool already captured in capturedEvents (the double-write scenario).
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValueOnce("[]") // pre-drain
+      .mockResolvedValueOnce(
+        JSON.stringify({ events: [addToCart], recoveredCount: 1 }),
+      ) // post-drain returns same event
+      .mockResolvedValueOnce("[]") as unknown as BrowserFn; // settle
+
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 0,
+    });
+
+    // Build a tool that returns the event in capturedEvents (as the find/click tool does)
+    const toolWithCapturedEvents = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "✓ Done" }],
+        details: { capturedEvents: [addToCart], timingRiskWarning: true },
+      }),
+    });
+
+    await toolWithCapturedEvents.execute("1", {});
+
+    expect(acc).toEqual([addToCart]);
+    expect(acc).toHaveLength(1);
+  });
+
+  it("waits during settle window when browser_find executes with action:click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createFindTool(mockBrowser("ok")));
+
+    await tool.execute("1", { action: "click", testId: "btn" });
+
+    expect(sleepFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips settle window when browser_find executes with a non-click action", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createFindTool(mockBrowser("ok")));
+
+    await tool.execute("1", { action: "hover", testId: "btn" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window when browser_find receives non-object args", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept({
+      name: "browser_find",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+    });
+
+    await tool.execute("1", null);
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for tools other than browser_click and browser_find", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept(createNavigateTool(mockBrowser("ok")));
+
+    await tool.execute("1", { url: "https://example.com" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for non-find tools even when args contain action:click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    // A non-browser_find, non-browser_click tool with action:"click" in args
+    const tool = intercept({
+      name: "browser_snapshot",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+    });
+
+    await tool.execute("1", { action: "click" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window when settleMs is 0 even for browser_click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 0,
+      settleIntervalMs: 50,
+      sleepFn,
+    });
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@e1" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
   });
 });
 
@@ -741,5 +1140,96 @@ describe("createDataLayerPoller", () => {
       "JSON.stringify((window.dataLayer || []).slice(1))",
     ]);
     expect(acc).toEqual([{ event: "page_view" }, { event: "click" }]);
+  });
+});
+
+// ─── createDataLayerInterceptor — settle window edge cases ───────────────────
+
+describe("createDataLayerInterceptor settle window edge cases", () => {
+  it("skips settle window when settleMs is zero even for browser_click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 0,
+      settleIntervalMs: 50,
+      sleepFn,
+    });
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@btn" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for a non-find non-click tool even when args.action is 'click'", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    const tool = intercept({
+      name: "browser_navigate",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {},
+      }),
+    });
+
+    await tool.execute("1", { action: "click" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+});
+
+// ─── createFindTool — executeTestIdDomAction parsing edge cases ───────────────
+
+describe("createFindTool executeTestIdDomAction parsing edge cases", () => {
+  it("trims whitespace from browser output before parsing", async () => {
+    const tool = createFindTool(
+      mockBrowser(`  ${JSON.stringify({ text: "✓ Done", capturedEvents: [] })}  `),
+    );
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe("✓ Done");
+  });
+
+  it("strips surrounding double-quotes from browser fallback output", async () => {
+    // agent-browser sometimes wraps the eval result in an extra pair of quotes
+    const tool = createFindTool(mockBrowser('"element not found"'));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    // outer quotes stripped → "element not found" becomes the text
+    expect((result.content[0] as { text: string }).text).toBe(
+      "element not found",
+    );
+  });
+
+  it("returns raw text when browser output is a non-parseable string", async () => {
+    const tool = createFindTool(mockBrowser("unexpected plain text"));
+    const result = await tool.execute("1", {
+      locator: "testid",
+      value: "btn",
+      action: "click",
+    });
+    expect((result.content[0] as { text: string }).text).toBe(
+      "unexpected plain text",
+    );
   });
 });

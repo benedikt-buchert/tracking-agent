@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ephemeral Fixture: Landing</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f4e8;
+        color: #202218;
+      }
+      main {
+        max-width: 54rem;
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+      }
+      section {
+        background: #fbfcf7;
+        border: 1px solid #cad0bb;
+        border-radius: 1rem;
+        padding: 1rem;
+      }
+      a {
+        display: inline-block;
+        padding: 0.9rem 1rem;
+        border-radius: 0.75rem;
+        background: #4f6a1f;
+        color: white;
+        text-decoration: none;
+      }
+      pre {
+        background: #1c1f19;
+        color: #eef5e1;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        min-height: 8rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body data-data-layer-mode="ephemeral">
+    <main>
+      <section>
+        <h1>Ephemeral Fixture</h1>
+        <p>
+          This flow keeps the deterministic selectors, but every page boots with
+          a fresh page-local `dataLayer`. The agent has to capture events in
+          time rather than relying on end-of-run page state.
+        </p>
+        <a
+          data-testid="start-checkout"
+          href="/ephemeral/transit.html?next=%2Fephemeral%2Fcheckout.html&label=checkout"
+        >
+          Start checkout
+        </a>
+      </section>
+
+      <section>
+        <h2>Current page dataLayer</h2>
+        <pre id="events-view">[]</pre>
+      </section>
+    </main>
+
+    <script src="/shared/fixture-store.js"></script>
+    <script>
+      window.fixtureStore.bootPage({ viewSelector: "#events-view", reset: true });
+    </script>
+  </body>
+</html>

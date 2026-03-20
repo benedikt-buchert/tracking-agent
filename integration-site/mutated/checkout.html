@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Mutated Fixture: Checkout</title>
+        <style>
+            body {
+                font-family: Georgia, serif;
+                margin: 0;
+                padding: 2rem;
+                background: linear-gradient(180deg, #f0f6ff, #ffffff);
+                color: #122033;
+            }
+            .shell {
+                max-width: 56rem;
+                margin: 0 auto;
+                display: grid;
+                gap: 1rem;
+            }
+            .panel {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid #c9d7ea;
+                border-radius: 1.25rem;
+                padding: 1rem;
+            }
+            .form-stack {
+                display: grid;
+                gap: 0.75rem;
+            }
+            label {
+                display: grid;
+                gap: 0.25rem;
+            }
+            input,
+            button {
+                font: inherit;
+            }
+            input {
+                padding: 0.75rem;
+                border: 1px solid #aac2de;
+                border-radius: 0.9rem;
+            }
+            button {
+                border: 0;
+                border-radius: 0.9rem;
+                padding: 0.9rem 1rem;
+                cursor: pointer;
+            }
+            [data-tone="primary"] {
+                background: #3668a1;
+                color: white;
+            }
+            [data-tone="warn"] {
+                background: #9b4d36;
+                color: white;
+            }
+            .status {
+                min-height: 1.5rem;
+                color: #8f321d;
+            }
+            pre {
+                background: #102132;
+                color: #dcefff;
+                padding: 1rem;
+                border-radius: 0.75rem;
+                min-height: 8rem;
+                overflow: auto;
+            }
+        </style>
+    </head>
+    <body data-data-layer-mode="rehydrate">
+        <div class="shell">
+            <div class="panel">
+                <h1>Customer details</h1>
+            </div>
+
+            <div class="panel">
+                <div id="checkout-actions">Loading customer form...</div>
+            </div>
+
+            <div class="panel">
+                <h2>Persisted dataLayer state</h2>
+                <pre id="events-view">[]</pre>
+            </div>
+        </div>
+
+        <script src="/shared/fixture-store.js"></script>
+        <script>
+            const store = window.fixtureStore;
+            store.bootPage({ viewSelector: "#events-view" });
+
+            store.mountAfterDelay(
+                "#checkout-actions",
+                `
+          <div class="form-stack">
+            <button
+              data-testid="cart-warning"
+              data-tone="warn"
+              type="button"
+            >
+              Emit broken cart event
+            </button>
+            <label>
+              Contact email
+              <input data-testid="contact-email" type="email" />
+            </label>
+            <label>
+              ZIP
+              <input data-testid="zip-entry" inputmode="numeric" />
+            </label>
+            <label>
+              Region
+              <input data-testid="region-entry" maxlength="2" />
+            </label>
+            <button
+              data-testid="payment-step"
+              data-tone="primary"
+              type="button"
+            >
+              Move to billing
+            </button>
+            <p class="status" id="checkout-status"></p>
+          </div>
+        `,
+                320,
+            );
+
+            setTimeout(() => {
+                document
+                    .querySelector('[data-testid="cart-warning"]')
+                    .addEventListener("click", () => {
+                        store.pushEvent(
+                            {
+                                $schema:
+                                    "https://tracking-docs-demo.buchert.digital/schemas/web/add-to-cart-event.json",
+                                event: "add_to_cart",
+                                ecommerce: {
+                                    currency: "USD",
+                                    items: [
+                                        {
+                                            item_id: 84,
+                                            item_name:
+                                                "Broken Mutated Cart Item",
+                                            quantity: "4",
+                                        },
+                                    ],
+                                },
+                            },
+                            "#events-view",
+                        );
+                        store.setStatus(
+                            "#checkout-status",
+                            "Broken cart event sent.",
+                            "warn",
+                        );
+                    });
+
+                document
+                    .querySelector('[data-testid="payment-step"]')
+                    .addEventListener("click", () => {
+                        const email = document.querySelector(
+                            '[data-testid="contact-email"]',
+                        ).value;
+                        const postalCode = document.querySelector(
+                            '[data-testid="zip-entry"]',
+                        ).value;
+                        const state = document.querySelector(
+                            '[data-testid="region-entry"]',
+                        ).value;
+
+                        const valid =
+                            /.+@.+\..+/.test(email) &&
+                            /^[0-9]{5}$/.test(postalCode) &&
+                            /^[A-Z]{2}$/.test(state);
+                        if (!valid) {
+                            store.setStatus(
+                                "#checkout-status",
+                                "Enter a valid email, ZIP, and 2-letter region.",
+                                "error",
+                            );
+                            return;
+                        }
+
+                        store.saveState({ email, postalCode, state });
+                        store.pushEvent(
+                            {
+                                $schema:
+                                    "https://tracking-docs-demo.buchert.digital/schemas/web/conditional-event.json",
+                                event: "address_submitted",
+                                country: "US",
+                                postal_code: postalCode,
+                                state,
+                            },
+                            "#events-view",
+                        );
+
+                        setTimeout(() => {
+                            window.location.href =
+                                "/mutated/transit.html?next=%2Fmutated%2Fpayment.html&label=payment";
+                        }, 260);
+                    });
+            }, 320);
+        </script>
+    </body>
+</html>

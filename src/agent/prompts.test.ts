@@ -57,6 +57,22 @@ describe("buildInitialPrompt", () => {
     ];
     const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
     expect(prompt).toContain("Fires when a user completes a purchase.");
+    expect(prompt).toContain(" — Fires when");
+  });
+
+  it("does not contain unresolved placeholders", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    expect(prompt).not.toContain("{{schemaUrl}}");
+    expect(prompt).not.toContain("{{targetUrl}}");
+    expect(prompt).not.toContain("{{eventSchemas}}");
+  });
+
+  it("separates multiple events with newlines", () => {
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, eventSchemas);
+    const idx1 = prompt.indexOf("purchase");
+    const idx2 = prompt.indexOf("add_to_cart");
+    const between = prompt.slice(idx1, idx2);
+    expect(between).toContain("\n");
   });
 
   it("omits the description marker when description is absent", () => {
@@ -69,6 +85,18 @@ describe("buildInitialPrompt", () => {
     const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
     expect(prompt).not.toContain(" — undefined");
     expect(prompt).not.toContain(" — \n");
+  });
+
+  it("adds no text between event name and schema line when description is absent", () => {
+    const schemas: EventSchema[] = [
+      {
+        eventName: "purchase",
+        schemaUrl: "https://example.com/purchase.json",
+      },
+    ];
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
+    // Mutation at L24:68 changes "" to "Stryker was here!", breaking this assertion
+    expect(prompt).toContain("- purchase\n  Schema:");
   });
 });
 
