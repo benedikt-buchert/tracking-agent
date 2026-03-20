@@ -722,6 +722,27 @@ describe("createDataLayerInterceptor", () => {
     expect(acc).toHaveLength(0);
   });
 
+  it("does not append to accumulator when tool result details has no capturedEvents", async () => {
+    const acc: unknown[] = [];
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, noSettle);
+    const tool = intercept({
+      name: "browser_navigate",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {}, // no capturedEvents key
+      }),
+    });
+
+    await expect(tool.execute("1", {})).resolves.toBeDefined();
+    expect(acc).toHaveLength(0);
+  });
+
   it("appends to accumulator when tool result capturedEvents is non-empty", async () => {
     const acc: unknown[] = [];
     const event = { event: "add_to_cart" };
@@ -997,6 +1018,49 @@ describe("createDataLayerInterceptor", () => {
     const tool = intercept(createNavigateTool(mockBrowser("ok")));
 
     await tool.execute("1", { url: "https://example.com" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window for non-find tools even when args contain action:click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 100,
+      settleIntervalMs: 100,
+      sleepFn,
+    });
+    // A non-browser_find, non-browser_click tool with action:"click" in args
+    const tool = intercept({
+      name: "browser_snapshot",
+      description: "",
+      label: "",
+      parameters: {} as never,
+      execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+    });
+
+    await tool.execute("1", { action: "click" });
+
+    expect(sleepFn).not.toHaveBeenCalled();
+  });
+
+  it("skips settle window when settleMs is 0 even for browser_click", async () => {
+    const acc: unknown[] = [];
+    const sleepFn = vi.fn().mockResolvedValue(undefined);
+    const interceptBrowserFn = vi
+      .fn()
+      .mockResolvedValue("[]") as unknown as BrowserFn;
+    const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
+      settleMs: 0,
+      settleIntervalMs: 50,
+      sleepFn,
+    });
+    const tool = intercept(createClickTool(mockBrowser("ok")));
+
+    await tool.execute("1", { selector: "@e1" });
 
     expect(sleepFn).not.toHaveBeenCalled();
   });
