@@ -86,6 +86,18 @@ describe("buildInitialPrompt", () => {
     expect(prompt).not.toContain(" — undefined");
     expect(prompt).not.toContain(" — \n");
   });
+
+  it("adds no text between event name and schema line when description is absent", () => {
+    const schemas: EventSchema[] = [
+      {
+        eventName: "purchase",
+        schemaUrl: "https://example.com/purchase.json",
+      },
+    ];
+    const prompt = buildInitialPrompt(schemaUrl, targetUrl, schemas);
+    // Mutation at L24:68 changes "" to "Stryker was here!", breaking this assertion
+    expect(prompt).toContain("- purchase\n  Schema:");
+  });
 });
 
 describe("createSystemPrompt", () => {

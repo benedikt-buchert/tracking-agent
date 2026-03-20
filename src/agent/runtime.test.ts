@@ -313,6 +313,12 @@ describe("createAgent", () => {
     expect(() => createAgent("replay recovery")).toThrow(/replay recovery/i);
   });
 
+  it("uses the default purpose in missing-credential errors when no purpose is given", () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_OAUTH_TOKEN"];
+    expect(() => createAgent()).toThrow(/agent-assisted exploration/i);
+  });
+
   it("registers all tools", () => {
     const agent = createAgent();
     const toolNames = agent.state.tools.map((t) => t.name);

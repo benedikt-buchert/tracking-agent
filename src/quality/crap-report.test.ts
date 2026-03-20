@@ -119,6 +119,41 @@ describe("runCrapReport", () => {
     );
   });
 
+  it("excludes .test.ts files from the report even when coverage exists for them", () => {
+    const coverage = JSON.stringify({
+      "src/sample.ts": {
+        path: "src/sample.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+        },
+        s: { "0": 1 },
+      },
+      "src/sample.test.ts": {
+        path: "src/sample.test.ts",
+        statementMap: {
+          "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+        },
+        s: { "0": 1 },
+      },
+    });
+    const write = vi.fn();
+
+    runCrapReport([], {
+      execFileSyncFn: vi.fn(() => "") as never,
+      readFileSyncFn: vi.fn((path: string) => {
+        if (path.endsWith("coverage-final.json")) return coverage;
+        return "export function f() { return 1; }";
+      }) as never,
+      readdirSyncFn: vi.fn(() => ["sample.ts", "sample.test.ts"]) as never,
+      statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+      write,
+    });
+
+    const output = write.mock.calls[0]?.[0] as string;
+    expect(output).toContain("src/sample.ts");
+    expect(output).not.toContain("src/sample.test.ts");
+  });
+
   it("prints a friendly message when no analyzable files are selected", () => {
     const write = vi.fn();
     runCrapReport(["--staged"], {
