@@ -51,7 +51,7 @@ export async function main(): Promise<void> {
   const { tools: agentTools } = buildAgentTools(accumulatedEvents, headless);
 
   if (replay) {
-    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools);
+    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools, accumulatedEvents);
   } else {
     await runInteractiveMode(
       schemaUrl,

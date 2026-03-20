@@ -91,6 +91,7 @@ export async function runReplayMode(
   targetUrl: string,
   eventSchemas: EventSchema[],
   agentTools: typeof allTools,
+  accumulatedEvents: unknown[] = [],
 ): Promise<void> {
   process.stderr.write(
     chalk.dim(`  Loading playbook from ${PLAYBOOK_FILE}...\n`),
@@ -129,6 +130,17 @@ export async function runReplayMode(
   const agentSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, agentSteps, () => recording);
+
+  const taskList = createTaskList(eventSchemas);
+  const baseSystemPrompt = createSystemPrompt();
+  taskList.update(accumulatedEvents);
+  agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+  agent.subscribe((event) => {
+    if (event.type === "turn_end") {
+      taskList.update(accumulatedEvents);
+      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+    }
+  });
 
   await agent.prompt(
     `Replay got stuck at step ${stuckAtIndex} (${stuckStep.tool} — ${JSON.stringify(stuckStep.args)}). ` +

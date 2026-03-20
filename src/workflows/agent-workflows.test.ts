@@ -689,6 +689,57 @@ describe("agent workflows", () => {
     expect(result).toBe("Error: unknown tool browser_unknown");
   });
 
+  // ─── task list injection — replay fallback ───────────────────────────────
+
+  it("injects task list into system prompt when replay gets stuck and agent takes over", async () => {
+    const accumulatedEvents = [{ event: "page_view" }];
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        { eventName: "purchase", schemaUrl: "https://example.com/purchase.json" },
+        { eventName: "page_view", schemaUrl: "https://example.com/page-view.json" },
+      ],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✓.*page_view/);
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("1/2");
+  });
+
+  it("replay fallback agent sees pending tasks when accumulated events are empty", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("0/1");
+  });
+
   // ─── task list injection ──────────────────────────────────────────────────
 
   it("injects task list into system prompt after turn_end when an event is found", async () => {
