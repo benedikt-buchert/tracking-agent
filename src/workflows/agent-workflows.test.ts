@@ -118,9 +118,23 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   const createAgentMock = vi.fn(() => new FakeAgent(agentPrompt));
 
+  // Emit a tool event during optimization to detect if recording was incorrectly
+  // left as true (mutations at L140/L209 that change `recording = false` to true)
+  const collectAgentTextMock = vi.fn(
+    async (agent: FakeAgent, _prompt: string) => {
+      agent.emit({
+        type: "tool_execution_start",
+        toolName: "browser_navigate",
+        args: { url: "https://opt.example.com" },
+        toolCallId: "t-opt",
+      });
+      return options.rewriteText ?? "";
+    },
+  );
+
   vi.doMock("../agent/runtime.js", () => ({
     createAgent: createAgentMock,
-    collectAgentText: vi.fn(async () => options.rewriteText ?? ""),
+    collectAgentText: collectAgentTextMock,
   }));
 
   vi.doMock("../agent/console-handler.js", () => ({
@@ -144,6 +158,7 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
       extractPlaybookSteps,
       agentPrompt,
       createAgent: createAgentMock,
+      collectAgentText: collectAgentTextMock,
     },
   };
 }
@@ -575,6 +590,48 @@ describe("agent workflows", () => {
       .map(([text]: [unknown]) => String(text))
       .join("");
     expect(stderrText).toContain("optimize updated playbook");
+  });
+
+  it("collectAgentText receives replay recovery context including stuck step and combined steps", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const prompt = mocks.collectAgentText.mock.calls[0]?.[1] as string;
+    expect(prompt).toContain("replay broke at step 0");
+    expect(prompt).toContain("combined steps");
+    expect(prompt).toContain('"selector": "#recover"');
+    expect(prompt).toContain("prompt:rewrite-playbook.md");
+  });
+
+  it("collectAgentText receives the rewrite-playbook prompt in interactive optimization", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#buy" } },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const prompt = mocks.collectAgentText.mock.calls[0]?.[1] as string;
+    expect(prompt).toBe("prompt:rewrite-playbook.md");
   });
 
   // ─── makeStepExecutor (via replayPlaybook executor argument) ─────────────────

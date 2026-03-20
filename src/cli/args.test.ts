@@ -336,6 +336,24 @@ describe("resolveArgs", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("does not read the saved file when both --schema and --url are already provided in replay mode", async () => {
+    const readFileFn = vi.fn();
+    const result = await resolveArgs(
+      [
+        "--replay",
+        "--schema",
+        "https://example.com/s.json",
+        "--url",
+        "https://example.com",
+      ],
+      undefined,
+      readFileFn,
+    );
+    expect(readFileFn).not.toHaveBeenCalled();
+    expect(result?.schemaUrl).toBe("https://example.com/s.json");
+    expect(result?.targetUrl).toBe("https://example.com");
+  });
+
   it("falls back to prompting when loading the saved file fails", async () => {
     const prompt = vi
       .fn()
