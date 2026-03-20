@@ -56,14 +56,27 @@ function attachSessionPersistence(
   schemaUrl: string,
   targetUrl: string,
   eventSchemas: EventSchema[],
+  getAccumulatedEvents: () => unknown[] = () => [],
 ): void {
   agent.subscribe(async (event) => {
     if (event.type === "turn_end") {
+      const events = getAccumulatedEvents();
+      const foundEventNames = eventSchemas
+        .map((s) => s.eventName)
+        .filter((name) =>
+          events.some(
+            (e) =>
+              e !== null &&
+              typeof e === "object" &&
+              (e as Record<string, unknown>)["event"] === name,
+          ),
+        );
       const session: AgentSession = {
         schemaUrl,
         targetUrl,
         eventSchemas,
         messages: agent.state.messages,
+        foundEventNames,
       };
       await saveSession(SESSION_FILE, session).catch(() => {
         /* non-fatal */
@@ -78,10 +91,11 @@ function createConfiguredAgent(
   targetUrl: string,
   eventSchemas: EventSchema[],
   purpose: string,
+  getAccumulatedEvents: () => unknown[] = () => [],
 ): Agent {
   const agent = createAgent(purpose);
   agent.setTools(agentTools);
-  attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas);
+  attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas, getAccumulatedEvents);
   agent.subscribe(createConsoleHandler());
   return agent;
 }
@@ -126,6 +140,7 @@ export async function runReplayMode(
     targetUrl,
     eventSchemas,
     "replay recovery after deterministic execution got stuck",
+    () => accumulatedEvents,
   );
   const agentSteps: PlaybookStep[] = [];
   let recording = true;
@@ -191,9 +206,15 @@ export async function runInteractiveMode(
   resume: boolean,
   agentTools: typeof allTools,
   accumulatedEvents: unknown[] = [],
+  foundEventNames: string[] = [],
 ): Promise<void> {
   const taskList = createTaskList(eventSchemas);
   const baseSystemPrompt = createSystemPrompt();
+
+  // Pre-populate task list from previous session so resume shows accurate state
+  for (const name of foundEventNames) {
+    taskList.update([{ event: name }]);
+  }
 
   const agent = createConfiguredAgent(
     agentTools,
@@ -203,6 +224,7 @@ export async function runInteractiveMode(
     resume
       ? "resuming an unfinished agent-assisted session"
       : "exploring the site when deterministic execution is insufficient",
+    () => accumulatedEvents,
   );
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;

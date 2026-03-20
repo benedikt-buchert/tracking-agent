@@ -525,6 +525,7 @@ export interface AgentSession {
   targetUrl: string;
   eventSchemas: EventSchema[];
   messages: unknown[];
+  foundEventNames?: string[];
 }
 
 export async function saveSession(

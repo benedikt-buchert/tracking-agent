@@ -38,7 +38,7 @@ export async function main(): Promise<void> {
       "\n",
   );
 
-  const { eventSchemas, savedMessages, loadSchemaFn } = await loadRunState(
+  const { eventSchemas, savedMessages, foundEventNames, loadSchemaFn } = await loadRunState(
     schemaUrl,
     resume,
     schemasDir,
@@ -61,6 +61,7 @@ export async function main(): Promise<void> {
       resume,
       agentTools,
       accumulatedEvents,
+      foundEventNames,
     );
   }
 

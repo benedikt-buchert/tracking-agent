@@ -26,6 +26,7 @@ export async function loadRunState(
 ): Promise<{
   eventSchemas: EventSchema[];
   savedMessages: unknown[];
+  foundEventNames: string[];
   loadSchemaFn: LoadSchemaFn;
 }> {
   const loadSchemaFn = schemasDir
@@ -45,6 +46,7 @@ export async function loadRunState(
     return {
       eventSchemas: session.eventSchemas,
       savedMessages: session.messages,
+      foundEventNames: session.foundEventNames ?? [],
       loadSchemaFn,
     };
   }
@@ -60,7 +62,7 @@ export async function loadRunState(
   process.stderr.write(
     chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`),
   );
-  return { eventSchemas, savedMessages: [], loadSchemaFn };
+  return { eventSchemas, savedMessages: [], foundEventNames: [], loadSchemaFn };
 }
 
 export async function openBrowser(

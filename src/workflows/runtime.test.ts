@@ -88,6 +88,32 @@ describe("workflow runtime", () => {
     );
   });
 
+  it("returns foundEventNames from session when resuming", async () => {
+    const { loadRunState, mocks } = await setupRuntimeModule();
+    mocks.loadSession.mockResolvedValueOnce({
+      eventSchemas: [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      messages: [],
+      foundEventNames: ["purchase"],
+    });
+
+    const result = await loadRunState("https://example.com/schema.json", true);
+
+    expect(result.foundEventNames).toEqual(["purchase"]);
+  });
+
+  it("returns empty foundEventNames when session has none (backwards compat)", async () => {
+    const { loadRunState } = await setupRuntimeModule();
+    // default mock has no foundEventNames field
+    const result = await loadRunState("https://example.com/schema.json", true);
+    expect(result.foundEventNames).toEqual([]);
+  });
+
+  it("returns empty foundEventNames when not resuming", async () => {
+    const { loadRunState } = await setupRuntimeModule();
+    const result = await loadRunState("https://example.com/schema.json", false);
+    expect(result.foundEventNames).toEqual([]);
+  });
+
   it("discovers schemas when not resuming", async () => {
     const { loadRunState, mocks } = await setupRuntimeModule();
 

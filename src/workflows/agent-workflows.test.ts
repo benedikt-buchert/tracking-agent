@@ -689,6 +689,72 @@ describe("agent workflows", () => {
     expect(result).toBe("Error: unknown tool browser_unknown");
   });
 
+  // ─── foundEventNames persistence and resume pre-population ──────────────
+
+  it("saves foundEventNames in session based on accumulated events at turn_end", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      ".tracking-agent-session.json",
+      expect.objectContaining({ foundEventNames: ["purchase"] }),
+    );
+  });
+
+  it("saves empty foundEventNames when no events were accumulated", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      ".tracking-agent-session.json",
+      expect.objectContaining({ foundEventNames: [] }),
+    );
+  });
+
+  it("pre-populates task list from foundEventNames on resume so previously found events show as found", async () => {
+    const savedMessages = [{ role: "assistant", content: [] }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({ savedMessages });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        { eventName: "purchase", schemaUrl: "https://example.com/purchase.json" },
+        { eventName: "page_view", schemaUrl: "https://example.com/page-view.json" },
+      ],
+      savedMessages,
+      true,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],               // accumulatedEvents empty on resume
+      ["purchase"],     // foundEventNames from previous session
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✓.*purchase/);
+    expect(lastPrompt).toMatch(/✗.*page_view/);
+    expect(lastPrompt).toContain("1/2");
+  });
+
   // ─── task list injection — replay fallback ───────────────────────────────
 
   it("injects task list into system prompt when replay gets stuck and agent takes over", async () => {
