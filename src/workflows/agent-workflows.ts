@@ -16,8 +16,9 @@ import type {
   StepExecutor,
 } from "../browser/runner.js";
 import { createConsoleHandler } from "../agent/console-handler.js";
-import { buildInitialPrompt, readPrompt } from "../agent/prompts.js";
+import { buildInitialPrompt, createSystemPrompt, readPrompt } from "../agent/prompts.js";
 import { collectAgentText, createAgent } from "../agent/runtime.js";
+import { createTaskList } from "../agent/task-list.js";
 import { PLAYBOOK_FILE, SESSION_FILE } from "./runtime.js";
 
 function makeStepExecutor(tools: typeof allTools): StepExecutor {
@@ -177,7 +178,11 @@ export async function runInteractiveMode(
   savedMessages: unknown[],
   resume: boolean,
   agentTools: typeof allTools,
+  accumulatedEvents: unknown[] = [],
 ): Promise<void> {
+  const taskList = createTaskList(eventSchemas);
+  const baseSystemPrompt = createSystemPrompt();
+
   const agent = createConfiguredAgent(
     agentTools,
     schemaUrl,
@@ -190,6 +195,13 @@ export async function runInteractiveMode(
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, recordedSteps, () => recording);
+
+  agent.subscribe((event) => {
+    if (event.type === "turn_end") {
+      taskList.update(accumulatedEvents);
+      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+    }
+  });
 
   if (resume && savedMessages.length > 0) {
     agent.replaceMessages(

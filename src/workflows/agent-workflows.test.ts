@@ -19,7 +19,10 @@ class FakeAgent {
   state = {
     tools: [] as unknown[],
     messages: [] as unknown[],
+    systemPrompt: "",
   };
+
+  systemPromptHistory: string[] = [];
 
   private readonly subscribers: Array<
     (event: Record<string, unknown>) => void
@@ -34,6 +37,11 @@ class FakeAgent {
 
   setTools(tools: unknown[]): void {
     this.state.tools = tools;
+  }
+
+  setSystemPrompt(prompt: string): void {
+    this.state.systemPrompt = prompt;
+    this.systemPromptHistory.push(prompt);
   }
 
   subscribe(fn: (event: Record<string, unknown>) => void): void {
@@ -113,6 +121,7 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   vi.doMock("../agent/prompts.js", () => ({
     buildInitialPrompt: vi.fn().mockReturnValue("INITIAL PROMPT"),
+    createSystemPrompt: vi.fn().mockReturnValue("SYSTEM PROMPT"),
     readPrompt: vi.fn((name: string) => `prompt:${name}`),
   }));
 
@@ -678,6 +687,50 @@ describe("agent workflows", () => {
     const result = await executor({ tool: "browser_unknown", args: {} });
 
     expect(result).toBe("Error: unknown tool browser_unknown");
+  });
+
+  // ─── task list injection ──────────────────────────────────────────────────
+
+  it("injects task list into system prompt after turn_end when an event is found", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const updatedPrompts = agent.systemPromptHistory;
+    expect(updatedPrompts.length).toBeGreaterThan(0);
+    const lastPrompt = updatedPrompts.at(-1) ?? "";
+    expect(lastPrompt).toContain("purchase");
+    expect(lastPrompt).toMatch(/✓.*purchase/);
+    expect(lastPrompt).toContain("1/1");
+  });
+
+  it("shows pending tasks in system prompt when no events have been found yet", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("0/1");
   });
 
   it("step executor returns empty string when tool result content has no text", async () => {

@@ -60,6 +60,7 @@ export async function main(): Promise<void> {
       savedMessages,
       resume,
       agentTools,
+      accumulatedEvents,
     );
   }
 
