@@ -77,6 +77,11 @@ describe("getStagedFiles", () => {
     expect(getStagedFiles(execFileSyncFn as never)).toEqual(
       new Set(["src/a.ts", "src/b.ts"]),
     );
+    expect(execFileSyncFn).toHaveBeenCalledWith(
+      "git",
+      ["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
   });
 });
 
@@ -127,6 +132,22 @@ describe("runCrapReport", () => {
     expect(write).toHaveBeenCalledWith(
       "No analyzable files selected for CRAP reporting.\n",
     );
+  });
+
+  it("does not throw when no reports exceed the threshold", () => {
+    expect(() =>
+      runCrapReport(["--threshold", "100"], {
+        execFileSyncFn: vi.fn(() => "") as never,
+        readFileSyncFn: vi.fn((path: string) =>
+          path.endsWith("coverage-final.json")
+            ? coverageJson
+            : "export function sample() { return 1; }",
+        ) as never,
+        readdirSyncFn: vi.fn(() => ["sample.ts"]) as never,
+        statSyncFn: vi.fn(() => ({ isDirectory: () => false })) as never,
+        write: vi.fn(),
+      }),
+    ).not.toThrow();
   });
 
   it("throws when the selected report exceeds the threshold", () => {

@@ -136,6 +136,11 @@ describe("extractEventName", () => {
     };
     expect(extractEventName(schema)).toBeUndefined();
   });
+
+  it("falls back to title when properties.event is null", () => {
+    const schema = { properties: { event: null }, title: "Fallback" };
+    expect(extractEventName(schema)).toBe("Fallback");
+  });
 });
 
 // ─── extractDescription ───────────────────────────────────────────────────────

@@ -204,6 +204,22 @@ describe("checkApiKey", () => {
     delete process.env["GOOGLE_APPLICATION_CREDENTIALS"];
     expect(hasVertexAdcCredentials(() => false, "/tmp/no-home")).toBe(false);
   });
+
+  it("shows ADC credentials not found message when project and location are set but credentials file does not exist", () => {
+    process.env = {
+      ...env,
+      MODEL_PROVIDER: "google-vertex",
+      GOOGLE_CLOUD_PROJECT: "my-project",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+      GOOGLE_APPLICATION_CREDENTIALS:
+        "/nonexistent/path/to/credentials-xyz-123.json",
+    };
+    delete process.env["GOOGLE_CLOUD_API_KEY"];
+    const error = getConfigurationError(() => checkApiKey());
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toMatch(/ADC credentials not found/);
+    expect(error.message).not.toMatch(/Missing env vars/);
+  });
 });
 
 describe("hasVertexAdcCredentials", () => {

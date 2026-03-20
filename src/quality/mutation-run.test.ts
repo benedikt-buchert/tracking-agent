@@ -43,6 +43,19 @@ describe("resolveTargets", () => {
     ).toEqual(["src/schema.ts"]);
   });
 
+  it("defaults headRef to HEAD when not specified", () => {
+    const execFileSyncFn = vi.fn(() => "src/schema.ts\n");
+    resolveTargets(
+      { staged: false, baseRef: "origin/main", dryRunOnly: false },
+      execFileSyncFn as never,
+    );
+    expect(execFileSyncFn).toHaveBeenCalledWith(
+      "git",
+      ["diff", "--name-only", "origin/main...HEAD"],
+      { encoding: "utf8" },
+    );
+  });
+
   it("uses staged diff selection when requested", () => {
     const execFileSyncFn = vi.fn(() => "src/agent/runtime.ts\nsrc/agent/runtime.test.ts\n");
     expect(
@@ -55,6 +68,12 @@ describe("resolveTargets", () => {
 
   it("returns an empty list when no selection mode is enabled", () => {
     expect(resolveTargets({ staged: false, dryRunOnly: false })).toEqual([]);
+  });
+
+  it("does not call execFileSyncFn when no selection mode is enabled", () => {
+    const execFileSyncFn = vi.fn(() => "");
+    resolveTargets({ staged: false, dryRunOnly: false }, execFileSyncFn as never);
+    expect(execFileSyncFn).not.toHaveBeenCalled();
   });
 });
 

@@ -154,4 +154,36 @@ describe("workflow runtime", () => {
 
     expect(mocks.closeBrowser).toHaveBeenCalledTimes(1);
   });
+
+  it("PLAYBOOK_FILE is the expected filename", async () => {
+    const { PLAYBOOK_FILE } = await setupRuntimeModule();
+    expect(PLAYBOOK_FILE).toBe(".tracking-agent-playbook.json");
+  });
+
+  it("falls back to empty string for waitForNavigation when getCurrentUrl rejects", async () => {
+    vi.resetModules();
+    const drainInterceptor = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const getCurrentUrl = vi.fn().mockRejectedValue(new Error("browser gone"));
+    const waitForNavigation = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../schema.js", () => ({
+      discoverEventSchemas: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../browser/runner.js", () => ({
+      closeBrowser: vi.fn(),
+      drainInterceptor,
+      getCurrentUrl,
+      loadSession: vi.fn(),
+      navigateTo: vi.fn(),
+      startHeadedBrowser: vi.fn(),
+      waitForNavigation,
+    }));
+    const { captureFinalEvents } = await import("./runtime.js");
+
+    await captureFinalEvents([]);
+
+    expect(waitForNavigation).toHaveBeenCalledWith("");
+  });
 });

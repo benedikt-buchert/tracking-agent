@@ -115,6 +115,15 @@ describe("main composition", () => {
     expect(mocks.runInteractiveMode).not.toHaveBeenCalled();
   });
 
+  it("passes process.argv.slice(2) to resolveArgs", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue(null);
+
+    await main();
+
+    expect(mocks.resolveArgs).toHaveBeenCalledWith(process.argv.slice(2));
+  });
+
   it("delegates replay runs to the replay workflow and finalizes the report", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
@@ -149,6 +158,13 @@ describe("main composition", () => {
       ["purchase"],
       "REPORT",
     );
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("Tracking Agent");
+    expect(stderrText).toContain("Schema:");
+    expect(stderrText).toContain("Target:");
+    expect(stderrText).toContain("Validating events");
   });
 
   it("delegates non-replay runs to the interactive workflow", async () => {
@@ -209,6 +225,57 @@ describe("main composition", () => {
 
     expect(stderr.mock.calls.join("")).toContain("Report saved");
     expect(stderr.mock.calls.join("")).toContain("/tmp/report-dir");
+  });
+
+  it("does not show mode line in the banner for a fresh (non-replay, non-resume) run", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+
+    await main();
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).not.toContain("Mode:");
+    expect(stderrText).not.toContain("Browser: headless");
+  });
+
+  it("does not show report saved message when saveReportFolder returns null", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+    mocks.saveReportFolder.mockResolvedValue(null);
+
+    await main();
+
+    expect(stderr.mock.calls.join("")).not.toContain("Report saved");
+  });
+
+  it("does not show report saved when saveReportFolder rejects", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+    mocks.saveReportFolder.mockRejectedValue(new Error("disk full"));
+
+    await main();
+
+    expect(stderr.mock.calls.join("")).not.toContain("Report saved");
   });
 
   it("passes landing events into the agent tool builder", async () => {

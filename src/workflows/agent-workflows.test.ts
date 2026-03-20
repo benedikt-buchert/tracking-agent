@@ -179,9 +179,13 @@ describe("agent workflows", () => {
     expect(mocks.replayPlaybook).toHaveBeenCalledTimes(1);
     expect(mocks.agentPrompt).not.toHaveBeenCalled();
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("skipping agent");
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("skipping agent");
+    expect(stderrText).toContain("Loading playbook");
+    expect(stderrText).toContain(".tracking-agent-playbook.json");
+    expect(stderrText).toContain("Replaying 1 step(s)");
   });
 
   it("falls back to the agent in replay mode and saves the optimized playbook", async () => {
@@ -229,12 +233,12 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("Falling back to agent");
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("optimized");
+    const stderrFallback = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrFallback).toContain("Falling back to agent");
+    expect(stderrFallback).toContain("optimized");
+    expect(stderrFallback).toContain("optimize");
   });
 
   it("does not save a playbook when replay recovery records no new steps", async () => {
@@ -341,9 +345,11 @@ describe("agent workflows", () => {
         steps: optimizedSteps,
       },
     );
-    expect(
-      stderr.mock.calls.map(([text]: [unknown]) => String(text)).join(""),
-    ).toContain("optimized");
+    const stderrInteractive = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrInteractive).toContain("optimized");
+    expect(stderrInteractive).toContain("optimize");
   });
 
   it("does not save a playbook for fresh runs when no action steps were recorded", async () => {
@@ -464,9 +470,10 @@ describe("agent workflows", () => {
 
     expect(mocks.agentPrompt).toHaveBeenCalledTimes(1);
     expect(mocks.savePlaybook).not.toHaveBeenCalled();
-    expect(mocks.agentPrompt.mock.calls[0]?.[1]).toContain(
-      "Continue exploring",
-    );
+    const resumePrompt = mocks.agentPrompt.mock.calls[0]?.[1] as string;
+    expect(resumePrompt).toContain("Continue exploring");
+    expect(resumePrompt).toContain("re-opened at");
+    expect(resumePrompt).toContain("You are resuming");
   });
 
   // ─── makeStepExecutor (via replayPlaybook executor argument) ─────────────────

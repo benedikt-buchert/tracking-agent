@@ -42,6 +42,14 @@ describe("parseArgs", () => {
     expect(parseArgs(["-h"]).help).toBe(true);
   });
 
+  it("returns all boolean fields as false in the --help shortcircuit", () => {
+    const result = parseArgs(["--help"]);
+    expect(result.help).toBe(true);
+    expect(result.resume).toBe(false);
+    expect(result.replay).toBe(false);
+    expect(result.headless).toBe(false);
+  });
+
   it("returns help:false when no help flag", () => {
     expect(parseArgs([]).help).toBe(false);
   });
@@ -159,28 +167,39 @@ describe("resolveArgs", () => {
   });
 
   it("prompts for missing --schema", async () => {
-    const prompted: string[] = [];
-    const prompt = async (q: string) => {
-      prompted.push(q);
-      return "https://prompted-schema.json";
-    };
+    const prompt = vi.fn().mockResolvedValue("https://prompted-schema.json");
     const result = await resolveArgs(["--url", "https://mysite.com"], prompt);
     expect(result?.schemaUrl).toBe("https://prompted-schema.json");
-    expect(prompted).toHaveLength(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Schema URL"));
   });
 
   it("prompts for missing --url", async () => {
-    const prompted: string[] = [];
-    const prompt = async (q: string) => {
-      prompted.push(q);
-      return "https://prompted-url.com";
-    };
+    const prompt = vi.fn().mockResolvedValue("https://prompted-url.com");
     const result = await resolveArgs(
       ["--schema", "https://example.com/schema.json"],
       prompt,
     );
     expect(result?.targetUrl).toBe("https://prompted-url.com");
-    expect(prompted).toHaveLength(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Target URL"));
+  });
+
+  it("resolves successfully in headless mode when both --schema and --url are provided", async () => {
+    const result = await resolveArgs([
+      "--headless",
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://example.com",
+    ]);
+    expect(result).toEqual({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: true,
+    });
   });
 
   it("prompts for both when no flags are provided", async () => {

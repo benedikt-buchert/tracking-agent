@@ -15,6 +15,16 @@ describe("isMutatableSourceFile", () => {
     expect(isMutatableSourceFile("README.md")).toBe(false);
     expect(isMutatableSourceFile("dist/agent.js")).toBe(false);
   });
+
+  it("excludes TypeScript files outside src/", () => {
+    expect(isMutatableSourceFile("lib/schema.ts")).toBe(false);
+    expect(isMutatableSourceFile("types/index.ts")).toBe(false);
+  });
+
+  it("excludes non-TypeScript files inside src/", () => {
+    expect(isMutatableSourceFile("src/runner.js")).toBe(false);
+    expect(isMutatableSourceFile("src/data.json")).toBe(false);
+  });
 });
 
 describe("selectMutationTargets", () => {
@@ -33,6 +43,16 @@ describe("selectMutationTargets", () => {
 describe("buildStrykerArgs", () => {
   it("builds full-run args when no explicit targets are provided", () => {
     expect(buildStrykerArgs()).toEqual([
+      "run",
+      "--coverageAnalysis",
+      "off",
+      "--concurrency",
+      "1",
+    ]);
+  });
+
+  it("does not add --mutate when targets is an empty array", () => {
+    expect(buildStrykerArgs([])).toEqual([
       "run",
       "--coverageAnalysis",
       "off",

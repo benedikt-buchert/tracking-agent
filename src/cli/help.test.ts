@@ -21,6 +21,10 @@ describe("buildHelpText", () => {
     expect(help).toContain("gcloud auth application-default login");
   });
 
+  it("ends with a trailing newline", () => {
+    expect(buildHelpText().endsWith("\n")).toBe(true);
+  });
+
   it("renders the documented usage, options, and environment lines", () => {
     expect(stripAnsi(buildHelpText())).toContain(`tracking-agent
 

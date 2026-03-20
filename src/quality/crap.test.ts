@@ -148,6 +148,31 @@ class Example {
     ]);
   });
 
+  it("counts || operators toward cyclomatic complexity", () => {
+    const sourceText = `
+function either(a: boolean, b: boolean) {
+  return a || b;
+}
+`;
+    const reports = collectFunctionReports("src/either.ts", sourceText, {
+      path: "src/either.ts",
+      statementMap: {
+        "0": {
+          start: { line: 3, column: 2 },
+          end: { line: 3, column: 15 },
+        },
+      },
+      s: { "0": 1 },
+    });
+
+    expect(reports).toEqual([
+      expect.objectContaining({
+        name: "either",
+        complexity: 2,
+      }),
+    ]);
+  });
+
   it("counts case clauses and logical operators toward cyclomatic complexity", () => {
     const sourceText = `
 const advanced = (value: number | null) => {
@@ -241,5 +266,9 @@ describe("report filtering", () => {
 
   it("returns reports over a CRAP threshold", () => {
     expect(findReportsOverThreshold(reports, 10)).toEqual([reports[0]]);
+  });
+
+  it("excludes reports with CRAP score exactly equal to the threshold", () => {
+    expect(findReportsOverThreshold(reports, 4)).toEqual([reports[0]]);
   });
 });

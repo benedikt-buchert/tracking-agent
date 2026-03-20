@@ -28,6 +28,7 @@ import {
   countEventsByType,
   saveReportFolder,
   extractPlaybookSteps,
+  DATA_LAYER_BRIDGE_STORAGE_KEY,
 } from "./runner.js";
 import type {
   EventValidationResult,
@@ -49,6 +50,14 @@ const schemas: EventSchema[] = [
 ];
 
 const ENTRY_URL = "https://example.com/schemas/entry.json";
+
+// ─── constants ───────────────────────────────────────────────────────────────
+
+describe("DATA_LAYER_BRIDGE_STORAGE_KEY", () => {
+  it("has the expected storage key value", () => {
+    expect(DATA_LAYER_BRIDGE_STORAGE_KEY).toBe("__tracking_agent_dl_events__");
+  });
+});
 
 // ─── resolveSchemaForEvent ────────────────────────────────────────────────────
 
