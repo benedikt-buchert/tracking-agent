@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { randomBytes } from "crypto";
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, resolve } from "path";
@@ -12,6 +13,11 @@ import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
 export type { ValidationResult };
 export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
 const seenPageBoundaryWarnings = new Set<string>();
+
+/** Generate a short random session ID for isolating parallel agent-browser runs. */
+export function generateSessionId(): string {
+  return `ta-${randomBytes(4).toString("hex")}`;
+}
 
 export function clearSeenPageBoundaryWarnings(): void {
   seenPageBoundaryWarnings.clear();
@@ -49,11 +55,13 @@ export function resolveAgentBrowserBin(): string {
 export function runAgentBrowser(
   args: string[],
   execFileFn: ExecFileFn = execFile,
+  sessionId?: string,
 ): Promise<string> {
+  const fullArgs = sessionId ? ["--session", sessionId, ...args] : args;
   return new Promise((res) => {
     execFileFn(
       resolveAgentBrowserBin(),
-      args,
+      fullArgs,
       { timeout: 30_000 },
       (err, stdout, stderr) => {
         if (err) {
@@ -72,6 +80,20 @@ export function runAgentBrowser(
 
 export function defaultBrowserFn(args: string[]): Promise<string> {
   return runAgentBrowser(args);
+}
+
+/**
+ * Create a BrowserFn scoped to a unique session. All commands issued through
+ * the returned function are isolated from other sessions, enabling safe
+ * parallel execution.
+ */
+export function createSessionBrowserFn(
+  sessionId: string = generateSessionId(),
+): { browserFn: BrowserFn; sessionId: string } {
+  return {
+    browserFn: (args: string[]) => runAgentBrowser(args, execFile, sessionId),
+    sessionId,
+  };
 }
 
 export async function runBrowserEval(

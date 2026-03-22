@@ -31,8 +31,10 @@ async function setupRuntimeModule() {
   vi.doMock("../schema.js", () => ({
     discoverEventSchemas,
   }));
+  const defaultBrowserFn = vi.fn();
   vi.doMock("../browser/runner.js", () => ({
     closeBrowser,
+    defaultBrowserFn,
     drainInterceptor,
     getCurrentUrl,
     loadSession,
@@ -180,7 +182,7 @@ describe("workflow runtime", () => {
     await openBrowser("https://example.com", false);
 
     expect(mocks.startHeadedBrowser).toHaveBeenCalledTimes(1);
-    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com", expect.any(Function));
     expect(stderr.mock.calls.join("")).toContain("Starting headed browser");
     expect(stderr.mock.calls.join("")).toContain("Opening https://example.com");
   });
@@ -193,7 +195,7 @@ describe("workflow runtime", () => {
 
     expect(mocks.startHeadedBrowser).not.toHaveBeenCalled();
     expect(process.env["AGENT_BROWSER_HEADED"]).toBeUndefined();
-    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com", expect.any(Function));
     expect(stderr.mock.calls.join("")).toContain("Starting headless browser");
   });
 
@@ -206,6 +208,7 @@ describe("workflow runtime", () => {
     expect(mocks.getCurrentUrl).toHaveBeenCalledTimes(1);
     expect(mocks.waitForNavigation).toHaveBeenCalledWith(
       "https://example.com/next",
+      expect.any(Function),
     );
     expect(result).toEqual([
       { event: "existing" },
@@ -240,8 +243,10 @@ describe("workflow runtime", () => {
     vi.doMock("../schema.js", () => ({
       discoverEventSchemas: vi.fn().mockResolvedValue([]),
     }));
+    const defaultBrowserFn2 = vi.fn();
     vi.doMock("../browser/runner.js", () => ({
       closeBrowser: vi.fn(),
+      defaultBrowserFn: defaultBrowserFn2,
       drainInterceptor,
       getCurrentUrl,
       loadSession: vi.fn(),
@@ -253,6 +258,6 @@ describe("workflow runtime", () => {
 
     await captureFinalEvents([]);
 
-    expect(waitForNavigation).toHaveBeenCalledWith("");
+    expect(waitForNavigation).toHaveBeenCalledWith("", expect.any(Function));
   });
 });

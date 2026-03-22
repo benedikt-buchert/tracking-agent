@@ -43,12 +43,12 @@ export async function main(): Promise<void> {
     resume,
     schemasDir,
   );
-  await openBrowser(targetUrl, headless);
-
   const accumulatedEvents: unknown[] = [];
-  const landingEvents = await drainInterceptor();
+  const { tools: agentTools, browserFn } = buildAgentTools(accumulatedEvents, headless);
+
+  await openBrowser(targetUrl, headless, browserFn);
+  const landingEvents = await drainInterceptor(browserFn);
   accumulatedEvents.push(...landingEvents);
-  const { tools: agentTools } = buildAgentTools(accumulatedEvents, headless);
 
   if (replay) {
     await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools, accumulatedEvents);
@@ -66,7 +66,7 @@ export async function main(): Promise<void> {
     );
   }
 
-  const events = await captureFinalEvents(accumulatedEvents);
+  const events = await captureFinalEvents(accumulatedEvents, browserFn);
 
   process.stderr.write(chalk.dim(`  Validating events...\n`));
   const results = await validateAll(events, eventSchemas, schemaUrl, loadSchemaFn);
@@ -86,5 +86,5 @@ export async function main(): Promise<void> {
     process.stderr.write(chalk.dim(`  Report saved → ${reportDir}\n\n`));
   }
 
-  await closeRunBrowser();
+  await closeRunBrowser(browserFn);
 }

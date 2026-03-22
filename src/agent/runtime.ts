@@ -8,9 +8,12 @@ import type { KnownProvider } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import {
   allTools,
+  createAllTools,
   createDataLayerInterceptor,
   createRequestHumanInputTool,
 } from "../browser/tools.js";
+import type { BrowserFn } from "../browser/runner.js";
+import { createSessionBrowserFn } from "../browser/runner.js";
 import { createSystemPrompt } from "./prompts.js";
 
 export function resolveModel() {
@@ -146,8 +149,15 @@ const POLLED_TOOL_NAMES = new Set([
 export function buildAgentTools(
   accumulatedEvents: unknown[],
   headless: boolean,
-): { tools: typeof allTools } {
-  const intercept = createDataLayerInterceptor(accumulatedEvents);
+  browserFn?: BrowserFn,
+): { tools: typeof allTools; browserFn: BrowserFn; sessionId: string } {
+  const session = createSessionBrowserFn();
+  const effectiveBrowserFn = browserFn ?? session.browserFn;
+  const baseTools = createAllTools(effectiveBrowserFn);
+  const intercept = createDataLayerInterceptor(
+    accumulatedEvents,
+    effectiveBrowserFn,
+  );
   const headlessHumanInputTool = headless
     ? createRequestHumanInputTool(
         () => Promise.resolve(""),
@@ -155,7 +165,7 @@ export function buildAgentTools(
       )
     : null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools = allTools
+  const tools = baseTools
     .filter((t) => t.name !== "get_datalayer")
     .map((t) => {
       if (headlessHumanInputTool && t.name === "request_human_input")
@@ -163,7 +173,7 @@ export function buildAgentTools(
       if (POLLED_TOOL_NAMES.has(t.name)) return intercept(t);
       return t;
     }) as typeof allTools;
-  return { tools };
+  return { tools, browserFn: effectiveBrowserFn, sessionId: session.sessionId };
 }
 
 export async function collectAgentText(

@@ -6,8 +6,10 @@ import {
   defaultLoadSchema,
 } from "../validation/index.js";
 import type { LoadSchemaFn } from "../validation/index.js";
+import type { BrowserFn } from "../browser/runner.js";
 import {
   closeBrowser,
+  defaultBrowserFn,
   drainInterceptor,
   getCurrentUrl,
   loadSession,
@@ -70,27 +72,29 @@ export async function loadRunState(
 export async function openBrowser(
   targetUrl: string,
   headless: boolean,
+  browser: BrowserFn = defaultBrowserFn,
 ): Promise<void> {
   if (headless) {
     delete process.env["AGENT_BROWSER_HEADED"];
     process.stderr.write(chalk.dim(`  Starting headless browser...\n`));
   } else {
-    await startHeadedBrowser();
+    await startHeadedBrowser(browser);
     process.stderr.write(chalk.dim(`  Starting headed browser...\n`));
   }
   process.stderr.write(chalk.dim(`  Opening ${targetUrl}...\n\n`));
-  await navigateTo(targetUrl);
+  await navigateTo(targetUrl, browser);
 }
 
 export async function captureFinalEvents(
   accumulatedEvents: unknown[],
+  browser: BrowserFn = defaultBrowserFn,
 ): Promise<unknown[]> {
   process.stderr.write(chalk.dim(`\n  Capturing dataLayer events...\n`));
-  const preNavEvents = await drainInterceptor();
+  const preNavEvents = await drainInterceptor(browser);
   accumulatedEvents.push(...preNavEvents);
-  const currentUrl = await getCurrentUrl().catch(() => "");
-  await waitForNavigation(currentUrl);
-  const postNavEvents = await drainInterceptor();
+  const currentUrl = await getCurrentUrl(browser).catch(() => "");
+  await waitForNavigation(currentUrl, browser);
+  const postNavEvents = await drainInterceptor(browser);
   accumulatedEvents.push(...postNavEvents);
   process.stderr.write(
     chalk.dim(`  Captured ${accumulatedEvents.length} event(s)\n\n`),
@@ -98,6 +102,8 @@ export async function captureFinalEvents(
   return accumulatedEvents;
 }
 
-export async function closeRunBrowser(): Promise<void> {
-  await closeBrowser();
+export async function closeRunBrowser(
+  browser: BrowserFn = defaultBrowserFn,
+): Promise<void> {
+  await closeBrowser(browser);
 }
