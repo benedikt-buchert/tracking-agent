@@ -766,13 +766,11 @@ describe("createDataLayerInterceptor", () => {
     expect(acc).toEqual([event]);
   });
 
-  it("drains events both before and after a wrapped tool executes", async () => {
+  it("drains events after a wrapped tool executes", async () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
       .fn()
-      .mockResolvedValueOnce(JSON.stringify([{ event: "before" }]))
-      .mockResolvedValueOnce(JSON.stringify([{ event: "after" }]))
-      .mockResolvedValueOnce(JSON.stringify([])) as unknown as BrowserFn;
+      .mockResolvedValueOnce(JSON.stringify([{ event: "after" }])) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(
       acc,
       interceptBrowserFn,
@@ -782,7 +780,7 @@ describe("createDataLayerInterceptor", () => {
 
     await tool.execute("1", { selector: "@e1" });
 
-    expect(acc).toEqual([{ event: "before" }, { event: "after" }]);
+    expect(acc).toEqual([{ event: "after" }]);
   });
 
   it("appends drained events to accumulator after the wrapped tool executes", async () => {
@@ -790,9 +788,7 @@ describe("createDataLayerInterceptor", () => {
     const events = [{ event: "page_view" }];
     const interceptBrowserFn = vi
       .fn()
-      .mockResolvedValueOnce("[]")
-      .mockResolvedValueOnce(JSON.stringify(events))
-      .mockResolvedValueOnce("[]") as unknown as BrowserFn;
+      .mockResolvedValueOnce(JSON.stringify(events)) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(
       acc,
       interceptBrowserFn,
@@ -807,9 +803,7 @@ describe("createDataLayerInterceptor", () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
       .fn()
-      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(
         JSON.stringify([{ event: "add_to_cart" }]),
       ) as unknown as BrowserFn;
@@ -861,9 +855,7 @@ describe("createDataLayerInterceptor", () => {
     const acc: unknown[] = [];
     const interceptBrowserFn = vi
       .fn()
-      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(JSON.stringify([{ event: "page_view" }]))
-      .mockResolvedValueOnce("[]")
       .mockResolvedValueOnce(
         JSON.stringify([{ event: "click" }]),
       ) as unknown as BrowserFn;
@@ -882,11 +874,9 @@ describe("createDataLayerInterceptor", () => {
   it("captures delayed click events during the settle window", async () => {
     const acc: unknown[] = [];
     const sleepFn = vi.fn().mockResolvedValue(undefined);
-    // drain before, drain after, then single settle drain
+    // single drain after settle sleep
     const interceptBrowserFn = (vi
       .fn()
-      .mockResolvedValueOnce("[]") // drain before execute
-      .mockResolvedValueOnce("[]") // drain after execute
       .mockResolvedValueOnce(JSON.stringify([{ event: "delayed_click" }])) // settle drain
     ) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
@@ -910,15 +900,13 @@ describe("createDataLayerInterceptor", () => {
     const acc: unknown[] = [];
     const addToCart = { event: "add_to_cart" };
 
-    // Simulate: pre-drain returns nothing, post-drain returns the same event that the
-    // tool already captured in capturedEvents (the double-write scenario).
+    // Simulate: drain returns the same event that the tool already captured
+    // in capturedEvents (the double-write scenario).
     const interceptBrowserFn = vi
       .fn()
-      .mockResolvedValueOnce("[]") // pre-drain
       .mockResolvedValueOnce(
         JSON.stringify({ events: [addToCart], recoveredCount: 1 }),
-      ) // post-drain returns same event
-      .mockResolvedValueOnce("[]") as unknown as BrowserFn; // settle
+      ) as unknown as BrowserFn; // post-drain returns same event
 
     const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
       settleMs: 0,

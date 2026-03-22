@@ -568,7 +568,6 @@ export function createDataLayerInterceptor(
   return (tool: AnyTool): AnyTool => ({
     ...tool,
     execute: async (id: string, args: unknown) => {
-      await drainIntoAccumulator();
       const result = await tool.execute(id, args);
       const capturedEvents = Array.isArray(result.details?.["capturedEvents"])
         ? (result.details["capturedEvents"] as unknown[])
@@ -576,11 +575,10 @@ export function createDataLayerInterceptor(
       if (capturedEvents.length > 0) {
         appendUniqueEvents(capturedEvents);
       }
-      await drainIntoAccumulator();
       if (settleMs > 0 && shouldWaitForDelayedEvents(tool.name, args)) {
         await sleepFn(settleMs);
-        await drainIntoAccumulator();
       }
+      await drainIntoAccumulator();
       return result;
     },
   });
