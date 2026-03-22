@@ -19,7 +19,10 @@ class FakeAgent {
   state = {
     tools: [] as unknown[],
     messages: [] as unknown[],
+    systemPrompt: "",
   };
+
+  systemPromptHistory: string[] = [];
 
   private readonly subscribers: Array<
     (event: Record<string, unknown>) => void
@@ -34,6 +37,11 @@ class FakeAgent {
 
   setTools(tools: unknown[]): void {
     this.state.tools = tools;
+  }
+
+  setSystemPrompt(prompt: string): void {
+    this.state.systemPrompt = prompt;
+    this.systemPromptHistory.push(prompt);
   }
 
   subscribe(fn: (event: Record<string, unknown>) => void): void {
@@ -86,12 +94,21 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
       return;
     }
 
+    agent.emit({ type: "turn_start" });
     for (const event of recordedToolEvents) {
       agent.emit({
         type: "tool_execution_start",
         toolName: event.toolName,
         args: event.args,
         toolCallId: "tool-1",
+      });
+      agent.emit({
+        type: "tool_execution_end",
+        toolName: event.toolName,
+        args: event.args,
+        toolCallId: "tool-1",
+        result: {},
+        isError: false,
       });
     }
     agent.emit(
@@ -104,7 +121,9 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   vi.doMock("../browser/runner.js", () => ({
     extractPlaybookSteps,
-    isActionTool: vi.fn((toolName: string) => toolName.startsWith("browser_")),
+    isActionTool: vi.fn((toolName: string) =>
+      ["browser_navigate","browser_click","browser_fill","browser_find","browser_wait","request_human_input"].includes(toolName)
+    ),
     loadPlaybook,
     replayPlaybook,
     savePlaybook,
@@ -113,6 +132,7 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   vi.doMock("../agent/prompts.js", () => ({
     buildInitialPrompt: vi.fn().mockReturnValue("INITIAL PROMPT"),
+    createSystemPrompt: vi.fn().mockReturnValue("SYSTEM PROMPT"),
     readPrompt: vi.fn((name: string) => `prompt:${name}`),
   }));
 
@@ -139,6 +159,10 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
 
   vi.doMock("../agent/console-handler.js", () => ({
     createConsoleHandler: vi.fn(() => () => undefined),
+  }));
+
+  vi.doMock("../browser/tools.js", () => ({
+    createSkipTaskTool: vi.fn(() => ({ name: "skip_task", execute: vi.fn() })),
   }));
 
   vi.doMock("./runtime.js", () => ({
@@ -678,6 +702,232 @@ describe("agent workflows", () => {
     const result = await executor({ tool: "browser_unknown", args: {} });
 
     expect(result).toBe("Error: unknown tool browser_unknown");
+  });
+
+  // ─── foundEventNames persistence and resume pre-population ──────────────
+
+  it("saves foundEventNames in session based on accumulated events at turn_end", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      ".tracking-agent-session.json",
+      expect.objectContaining({ foundEventNames: ["purchase"] }),
+    );
+  });
+
+  it("saves empty foundEventNames when no events were accumulated", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    expect(mocks.saveSession).toHaveBeenCalledWith(
+      ".tracking-agent-session.json",
+      expect.objectContaining({ foundEventNames: [] }),
+    );
+  });
+
+  it("pre-populates task list from foundEventNames on resume so previously found events show as found", async () => {
+    const savedMessages = [{ role: "assistant", content: [] }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({ savedMessages });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        { eventName: "purchase", schemaUrl: "https://example.com/purchase.json" },
+        { eventName: "page_view", schemaUrl: "https://example.com/page-view.json" },
+      ],
+      savedMessages,
+      true,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],               // accumulatedEvents empty on resume
+      ["purchase"],     // foundEventNames from previous session
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✓.*purchase/);
+    expect(lastPrompt).toMatch(/✗.*page_view/);
+    expect(lastPrompt).toContain("1/2");
+  });
+
+  // ─── task list display ────────────────────────────────────────────────────
+
+  it("writes task list header to stderr at turn_start", async () => {
+    const { runInteractiveMode } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+    );
+
+    const stderrOutput = stderr.mock.calls.map(([t]: [unknown]) => String(t)).join("");
+    expect(stderrOutput).toContain("purchase");
+    expect(stderrOutput).toContain("0/1");
+  });
+
+  it("writes compact task progress to stderr after action tool completes", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#buy" } },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const stderrOutput = stderr.mock.calls.map(([t]: [unknown]) => String(t)).join("");
+    expect(stderrOutput).toMatch(/✓.*purchase/);
+    expect(stderrOutput).toContain("1/1");
+  });
+
+  it("does not write task progress after non-action tools", async () => {
+    const { runInteractiveMode } = await setupWorkflowModule({
+      recordedToolEvents: [
+        { toolName: "browser_snapshot", args: {} },
+      ],
+    });
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_snapshot", execute: vi.fn() }] as never,
+    );
+
+    // The turn_start header uses "◈ Tasks" — compact updates use "◈ N/M" (no "Tasks")
+    const compactUpdates = stderr.mock.calls
+      .map(([t]: [unknown]) => String(t))
+      .filter((s: string) => s.includes("◈") && !s.includes("Tasks"));
+    expect(compactUpdates).toHaveLength(0);
+  });
+
+  // ─── task list injection — replay fallback ───────────────────────────────
+
+  it("injects task list into system prompt when replay gets stuck and agent takes over", async () => {
+    const accumulatedEvents = [{ event: "page_view" }];
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [
+        { eventName: "purchase", schemaUrl: "https://example.com/purchase.json" },
+        { eventName: "page_view", schemaUrl: "https://example.com/page-view.json" },
+      ],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✓.*page_view/);
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("1/2");
+  });
+
+  it("replay fallback agent sees pending tasks when accumulated events are empty", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+      recordedToolEvents: [
+        { toolName: "browser_click", args: { selector: "#recover" } },
+      ],
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("0/1");
+  });
+
+  // ─── task list injection ──────────────────────────────────────────────────
+
+  it("injects task list into system prompt after turn_end when an event is found", async () => {
+    const accumulatedEvents = [{ event: "purchase" }];
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      accumulatedEvents,
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const updatedPrompts = agent.systemPromptHistory;
+    expect(updatedPrompts.length).toBeGreaterThan(0);
+    const lastPrompt = updatedPrompts.at(-1) ?? "";
+    expect(lastPrompt).toContain("purchase");
+    expect(lastPrompt).toMatch(/✓.*purchase/);
+    expect(lastPrompt).toContain("1/1");
+  });
+
+  it("shows pending tasks in system prompt when no events have been found yet", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as FakeAgent;
+    const lastPrompt = agent.systemPromptHistory.at(-1) ?? "";
+    expect(lastPrompt).toMatch(/✗.*purchase/);
+    expect(lastPrompt).toContain("0/1");
   });
 
   it("step executor returns empty string when tool result content has no text", async () => {

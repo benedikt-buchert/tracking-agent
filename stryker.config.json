@@ -7,7 +7,7 @@
   "incremental": true,
   "incrementalFile": "reports/stryker-incremental.json",
   "coverageAnalysis": "perTest",
-  "reporters": ["json"],
+  "reporters": ["progress", "json"],
   "typescriptChecker": {
     "prioritizePerformanceOverAccuracy": true
   }

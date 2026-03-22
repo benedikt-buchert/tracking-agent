@@ -1,5 +1,6 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { TaskList } from "../agent/task-list.js";
 import {
   DATA_LAYER_BRIDGE_STORAGE_KEY,
   defaultBrowserFn,
@@ -457,6 +458,34 @@ async function executeTestIdDomAction(
 
 export const findTool = createFindTool();
 
+// ─── Tool: skip_task ──────────────────────────────────────────────────────────
+
+const SkipTaskParams = Type.Object({
+  event_name: Type.String({
+    description: "The event name to mark as impossible to trigger",
+  }),
+  reason: Type.String({
+    description:
+      "Why this event cannot be triggered — what you tried and why it is not available",
+  }),
+});
+
+export function createSkipTaskTool(
+  taskList: TaskList,
+): AgentTool<typeof SkipTaskParams> {
+  return {
+    name: "skip_task",
+    description:
+      "Mark an expected event as impossible to trigger on this site. Only call this after genuinely exhausting all reasonable attempts: navigating to relevant pages, trying different interactions, looking for hidden triggers. You must provide a clear reason.",
+    label: "Skipping task",
+    parameters: SkipTaskParams,
+    execute: async (_id, { event_name, reason }) => {
+      taskList.skip(event_name, reason);
+      return textResult(`Marked ${event_name} as skipped: ${reason}`);
+    },
+  };
+}
+
 // ─── createDataLayerPoller ────────────────────────────────────────────────────
 //
 // Returns a wrapper function that, after any wrapped tool executes, automatically
@@ -469,6 +498,7 @@ type AnyTool = AgentTool<any>;
 type SleepFn = (ms: number) => Promise<void>;
 interface DataLayerInterceptorOptions {
   settleMs?: number;
+  /** @deprecated No longer used — settle is a single sleep + drain. Kept for API compat. */
   settleIntervalMs?: number;
   sleepFn?: SleepFn;
 }
@@ -517,7 +547,6 @@ export function createDataLayerInterceptor(
   browserFn: BrowserFn = defaultBrowserFn,
   {
     settleMs = 300,
-    settleIntervalMs = 50,
     sleepFn = defaultSleep,
   }: DataLayerInterceptorOptions = {},
 ): (tool: AnyTool) => AnyTool {
@@ -539,7 +568,6 @@ export function createDataLayerInterceptor(
   return (tool: AnyTool): AnyTool => ({
     ...tool,
     execute: async (id: string, args: unknown) => {
-      await drainIntoAccumulator();
       const result = await tool.execute(id, args);
       const capturedEvents = Array.isArray(result.details?.["capturedEvents"])
         ? (result.details["capturedEvents"] as unknown[])
@@ -547,14 +575,10 @@ export function createDataLayerInterceptor(
       if (capturedEvents.length > 0) {
         appendUniqueEvents(capturedEvents);
       }
-      await drainIntoAccumulator();
       if (settleMs > 0 && shouldWaitForDelayedEvents(tool.name, args)) {
-        const attempts = Math.max(1, Math.ceil(settleMs / settleIntervalMs));
-        for (let i = 0; i < attempts; i++) {
-          await sleepFn(settleIntervalMs);
-          await drainIntoAccumulator();
-        }
+        await sleepFn(settleMs);
       }
+      await drainIntoAccumulator();
       return result;
     },
   });

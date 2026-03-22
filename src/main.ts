@@ -38,20 +38,20 @@ export async function main(): Promise<void> {
       "\n",
   );
 
-  const { eventSchemas, savedMessages, loadSchemaFn } = await loadRunState(
+  const { eventSchemas, savedMessages, foundEventNames, skippedEvents, loadSchemaFn } = await loadRunState(
     schemaUrl,
     resume,
     schemasDir,
   );
-  await openBrowser(targetUrl, headless);
-
   const accumulatedEvents: unknown[] = [];
-  const landingEvents = await drainInterceptor();
+  const { tools: agentTools, browserFn } = buildAgentTools(accumulatedEvents, headless);
+
+  await openBrowser(targetUrl, headless, browserFn);
+  const landingEvents = await drainInterceptor(browserFn);
   accumulatedEvents.push(...landingEvents);
-  const { tools: agentTools } = buildAgentTools(accumulatedEvents, headless);
 
   if (replay) {
-    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools);
+    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools, accumulatedEvents);
   } else {
     await runInteractiveMode(
       schemaUrl,
@@ -60,10 +60,13 @@ export async function main(): Promise<void> {
       savedMessages,
       resume,
       agentTools,
+      accumulatedEvents,
+      foundEventNames,
+      skippedEvents,
     );
   }
 
-  const events = await captureFinalEvents(accumulatedEvents);
+  const events = await captureFinalEvents(accumulatedEvents, browserFn);
 
   process.stderr.write(chalk.dim(`  Validating events...\n`));
   const results = await validateAll(events, eventSchemas, schemaUrl, loadSchemaFn);
@@ -83,5 +86,5 @@ export async function main(): Promise<void> {
     process.stderr.write(chalk.dim(`  Report saved → ${reportDir}\n\n`));
   }
 
-  await closeRunBrowser();
+  await closeRunBrowser(browserFn);
 }

@@ -9,6 +9,7 @@ import {
   replayPlaybook,
   validateAll,
 } from "../browser/runner.js";
+import type { BrowserFn } from "../browser/runner.js";
 import { createLocalFirstLoader } from "../validation/index.js";
 import { discoverEventSchemas } from "../schema.js";
 import {
@@ -22,21 +23,23 @@ const loadSchemaFn = createLocalFirstLoader(FIXTURES_SCHEMAS_DIR);
 
 describe.sequential("agent-browser integration fixture", () => {
   const closers: Array<() => Promise<void>> = [];
+  const sessionBrowserFns: BrowserFn[] = [];
   const originalHeaded = process.env["AGENT_BROWSER_HEADED"];
 
   afterAll(async () => {
-    await closeBrowser().catch(() => {
-      /* non-fatal */
-    });
+    for (const fn of sessionBrowserFns) {
+      await closeBrowser(fn).catch(() => {});
+    }
   });
 
   afterEach(async () => {
     while (closers.length > 0) {
       await closers.pop()?.();
     }
-    await closeBrowser().catch(() => {
-      /* non-fatal */
-    });
+    for (const fn of sessionBrowserFns) {
+      await closeBrowser(fn).catch(() => {});
+    }
+    sessionBrowserFns.length = 0;
     if (originalHeaded === undefined) delete process.env["AGENT_BROWSER_HEADED"];
     else process.env["AGENT_BROWSER_HEADED"] = originalHeaded;
   });
@@ -56,9 +59,10 @@ describe.sequential("agent-browser integration fixture", () => {
       loadSchemaFn,
     );
     const accumulatedEvents: unknown[] = [];
-    const { tools } = buildAgentTools(accumulatedEvents, true);
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true);
+    sessionBrowserFns.push(browserFn);
 
-    await navigateTo(`${server.baseUrl}${deterministic!.route}`);
+    await navigateTo(`${server.baseUrl}${deterministic!.route}`, browserFn);
 
     const replayResult = await replayPlaybook(
       deterministic!.deterministicPlaybook,
@@ -72,7 +76,7 @@ describe.sequential("agent-browser integration fixture", () => {
 
     expect(replayResult.stuckAtIndex).toBe(-1);
 
-    const observedEvents = await captureDataLayer(0);
+    const observedEvents = await captureDataLayer(0, browserFn);
     expect(observedEvents).toHaveLength(4);
 
     const results = await validateAll(
@@ -117,9 +121,10 @@ describe.sequential("agent-browser integration fixture", () => {
     expect(mutated).toBeDefined();
 
     const accumulatedEvents: unknown[] = [];
-    const { tools } = buildAgentTools(accumulatedEvents, true);
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true);
+    sessionBrowserFns.push(browserFn);
 
-    await navigateTo(`${server.baseUrl}${mutated!.route}`);
+    await navigateTo(`${server.baseUrl}${mutated!.route}`, browserFn);
 
     const replayResult = await replayPlaybook(
       deterministic!.deterministicPlaybook,
@@ -149,9 +154,10 @@ describe.sequential("agent-browser integration fixture", () => {
       loadSchemaFn,
     );
     const accumulatedEvents: unknown[] = [];
-    const { tools } = buildAgentTools(accumulatedEvents, true);
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true);
+    sessionBrowserFns.push(browserFn);
 
-    await navigateTo(`${server.baseUrl}${ephemeral!.route}`);
+    await navigateTo(`${server.baseUrl}${ephemeral!.route}`, browserFn);
 
     const replayResult = await replayPlaybook(
       ephemeral!.deterministicPlaybook,
@@ -165,7 +171,7 @@ describe.sequential("agent-browser integration fixture", () => {
 
     expect(replayResult.stuckAtIndex).toBe(-1);
 
-    const finalPageEvents = await captureDataLayer(0);
+    const finalPageEvents = await captureDataLayer(0, browserFn);
     expect(finalPageEvents).toHaveLength(1);
     expect(finalPageEvents[0]).toEqual(
       expect.objectContaining({ event: "user_update" }),
@@ -199,9 +205,10 @@ describe.sequential("agent-browser integration fixture", () => {
     expect(ephemeral).toBeDefined();
 
     const accumulatedEvents: unknown[] = [];
-    const { tools } = buildAgentTools(accumulatedEvents, true);
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true);
+    sessionBrowserFns.push(browserFn);
 
-    await navigateTo(`${server.baseUrl}${ephemeral!.route}`);
+    await navigateTo(`${server.baseUrl}${ephemeral!.route}`, browserFn);
 
     for (const step of ephemeral!.deterministicPlaybook.slice(0, 7)) {
       const tool = tools.find((candidate) => candidate.name === step.tool);
@@ -209,7 +216,7 @@ describe.sequential("agent-browser integration fixture", () => {
       await tool.execute("integration", step.args as never);
     }
 
-    const drained = await drainInterceptor();
+    const drained = await drainInterceptor(browserFn);
     const observedNames = new Set(
       [...accumulatedEvents, ...drained]
         .map((event) =>
@@ -233,9 +240,10 @@ describe.sequential("agent-browser integration fixture", () => {
     expect(ephemeral).toBeDefined();
 
     const accumulatedEvents: unknown[] = [];
-    const { tools } = buildAgentTools(accumulatedEvents, true);
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true);
+    sessionBrowserFns.push(browserFn);
 
-    await navigateTo(`${server.baseUrl}${ephemeral!.route}`);
+    await navigateTo(`${server.baseUrl}${ephemeral!.route}`, browserFn);
 
     for (const step of ephemeral!.deterministicPlaybook.slice(0, 13)) {
       const tool = tools.find((candidate) => candidate.name === step.tool);
@@ -243,7 +251,7 @@ describe.sequential("agent-browser integration fixture", () => {
       await tool.execute("integration", step.args as never);
     }
 
-    const drained = await drainInterceptor();
+    const drained = await drainInterceptor(browserFn);
     const observedNames = new Set(
       [...accumulatedEvents, ...drained]
         .map((event) =>

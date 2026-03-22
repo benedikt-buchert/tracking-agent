@@ -16,7 +16,8 @@ async function setupMainModule() {
     loadSchemaFn: vi.fn(),
   });
   const openBrowser = vi.fn().mockResolvedValue(undefined);
-  const buildAgentTools = vi.fn().mockReturnValue({ tools: [] });
+  const mockBrowserFn = vi.fn();
+  const buildAgentTools = vi.fn().mockReturnValue({ tools: [], browserFn: mockBrowserFn, sessionId: "test-session" });
   const runReplayMode = vi.fn().mockResolvedValue(undefined);
   const runInteractiveMode = vi.fn().mockResolvedValue(undefined);
   const validateAll = vi.fn().mockResolvedValue([{ valid: true, errors: [] }]);
@@ -145,6 +146,7 @@ describe("main composition", () => {
     expect(mocks.openBrowser).toHaveBeenCalledWith(
       "https://example.com",
       false,
+      expect.any(Function),
     );
     expect(mocks.runReplayMode).toHaveBeenCalledTimes(1);
     expect(mocks.runInteractiveMode).not.toHaveBeenCalled();
@@ -152,7 +154,7 @@ describe("main composition", () => {
     expect(mocks.generateReport).toHaveBeenCalledTimes(1);
     expect(stdout).toHaveBeenCalledWith("REPORT");
     expect(mocks.closeRunBrowser).toHaveBeenCalledTimes(1);
-    expect(mocks.captureFinalEvents).toHaveBeenCalledWith([]);
+    expect(mocks.captureFinalEvents).toHaveBeenCalledWith([], expect.any(Function));
     expect(mocks.saveReportFolder).toHaveBeenCalledWith(
       "tracking-reports",
       [{ event: "purchase" }],
@@ -280,7 +282,7 @@ describe("main composition", () => {
     expect(stderr.mock.calls.join("")).not.toContain("Report saved");
   });
 
-  it("passes landing events into the agent tool builder", async () => {
+  it("pushes landing events into the shared accumulator after building tools", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
@@ -293,9 +295,9 @@ describe("main composition", () => {
 
     await main();
 
-    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
-      [{ event: "landing" }],
-      false,
-    );
+    // buildAgentTools receives the accumulator array (by reference);
+    // landing events are pushed into it after the browser opens.
+    const accArg = mocks.buildAgentTools.mock.calls[0][0] as unknown[];
+    expect(accArg).toContainEqual({ event: "landing" });
   });
 });

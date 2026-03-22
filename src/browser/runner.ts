@@ -1,6 +1,8 @@
 import { execFile } from "child_process";
+import { randomBytes } from "crypto";
+import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import type { EventSchema } from "../schema.js";
 import {
   validateEvent,
@@ -11,6 +13,11 @@ import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
 export type { ValidationResult };
 export const DATA_LAYER_BRIDGE_STORAGE_KEY = "__tracking_agent_dl_events__";
 const seenPageBoundaryWarnings = new Set<string>();
+
+/** Generate a short random session ID for isolating parallel agent-browser runs. */
+export function generateSessionId(): string {
+  return `ta-${randomBytes(4).toString("hex")}`;
+}
 
 export function clearSeenPageBoundaryWarnings(): void {
   seenPageBoundaryWarnings.clear();
@@ -35,25 +42,37 @@ type ExecFileError = Error & {
   stderr?: string;
 };
 
+/**
+ * Resolve the agent-browser binary, preferring the local node_modules/.bin
+ * version over a global install to avoid version mismatches.
+ */
+export function resolveAgentBrowserBin(): string {
+  const localBin = resolve("node_modules", ".bin", "agent-browser");
+  if (existsSync(localBin)) return localBin;
+  return "agent-browser";
+}
+
 export function runAgentBrowser(
   args: string[],
   execFileFn: ExecFileFn = execFile,
+  sessionId?: string,
 ): Promise<string> {
-  return new Promise((resolve) => {
+  const fullArgs = sessionId ? ["--session", sessionId, ...args] : args;
+  return new Promise((res) => {
     execFileFn(
-      "agent-browser",
-      args,
+      resolveAgentBrowserBin(),
+      fullArgs,
       { timeout: 30_000 },
       (err, stdout, stderr) => {
         if (err) {
           const execErr = err as ExecFileError;
-          resolve(
+          res(
             execErr.stdout?.trim() ||
               execErr.stderr?.trim() ||
               stderr?.trim() ||
               err.message,
           );
-        } else resolve(stdout?.trim() || stderr?.trim() || "");
+        } else res(stdout?.trim() || stderr?.trim() || "");
       },
     );
   });
@@ -61,6 +80,20 @@ export function runAgentBrowser(
 
 export function defaultBrowserFn(args: string[]): Promise<string> {
   return runAgentBrowser(args);
+}
+
+/**
+ * Create a BrowserFn scoped to a unique session. All commands issued through
+ * the returned function are isolated from other sessions, enabling safe
+ * parallel execution.
+ */
+export function createSessionBrowserFn(
+  sessionId: string = generateSessionId(),
+): { browserFn: BrowserFn; sessionId: string } {
+  return {
+    browserFn: (args: string[]) => runAgentBrowser(args, execFile, sessionId),
+    sessionId,
+  };
 }
 
 export async function runBrowserEval(
@@ -525,6 +558,8 @@ export interface AgentSession {
   targetUrl: string;
   eventSchemas: EventSchema[];
   messages: unknown[];
+  foundEventNames?: string[];
+  skippedEvents?: { name: string; reason: string }[];
 }
 
 export async function saveSession(

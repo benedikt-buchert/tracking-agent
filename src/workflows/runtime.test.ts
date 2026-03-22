@@ -31,8 +31,10 @@ async function setupRuntimeModule() {
   vi.doMock("../schema.js", () => ({
     discoverEventSchemas,
   }));
+  const defaultBrowserFn = vi.fn();
   vi.doMock("../browser/runner.js", () => ({
     closeBrowser,
+    defaultBrowserFn,
     drainInterceptor,
     getCurrentUrl,
     loadSession,
@@ -86,6 +88,32 @@ describe("workflow runtime", () => {
     expect(stderr.mock.calls.join("")).toContain(
       "Restored 1 schema(s), 1 messages",
     );
+  });
+
+  it("returns foundEventNames from session when resuming", async () => {
+    const { loadRunState, mocks } = await setupRuntimeModule();
+    mocks.loadSession.mockResolvedValueOnce({
+      eventSchemas: [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      messages: [],
+      foundEventNames: ["purchase"],
+    });
+
+    const result = await loadRunState("https://example.com/schema.json", true);
+
+    expect(result.foundEventNames).toEqual(["purchase"]);
+  });
+
+  it("returns empty foundEventNames when session has none (backwards compat)", async () => {
+    const { loadRunState } = await setupRuntimeModule();
+    // default mock has no foundEventNames field
+    const result = await loadRunState("https://example.com/schema.json", true);
+    expect(result.foundEventNames).toEqual([]);
+  });
+
+  it("returns empty foundEventNames when not resuming", async () => {
+    const { loadRunState } = await setupRuntimeModule();
+    const result = await loadRunState("https://example.com/schema.json", false);
+    expect(result.foundEventNames).toEqual([]);
   });
 
   it("discovers schemas when not resuming", async () => {
@@ -154,7 +182,7 @@ describe("workflow runtime", () => {
     await openBrowser("https://example.com", false);
 
     expect(mocks.startHeadedBrowser).toHaveBeenCalledTimes(1);
-    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com", expect.any(Function));
     expect(stderr.mock.calls.join("")).toContain("Starting headed browser");
     expect(stderr.mock.calls.join("")).toContain("Opening https://example.com");
   });
@@ -167,7 +195,7 @@ describe("workflow runtime", () => {
 
     expect(mocks.startHeadedBrowser).not.toHaveBeenCalled();
     expect(process.env["AGENT_BROWSER_HEADED"]).toBeUndefined();
-    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com");
+    expect(mocks.navigateTo).toHaveBeenCalledWith("https://example.com", expect.any(Function));
     expect(stderr.mock.calls.join("")).toContain("Starting headless browser");
   });
 
@@ -180,6 +208,7 @@ describe("workflow runtime", () => {
     expect(mocks.getCurrentUrl).toHaveBeenCalledTimes(1);
     expect(mocks.waitForNavigation).toHaveBeenCalledWith(
       "https://example.com/next",
+      expect.any(Function),
     );
     expect(result).toEqual([
       { event: "existing" },
@@ -214,8 +243,10 @@ describe("workflow runtime", () => {
     vi.doMock("../schema.js", () => ({
       discoverEventSchemas: vi.fn().mockResolvedValue([]),
     }));
+    const defaultBrowserFn2 = vi.fn();
     vi.doMock("../browser/runner.js", () => ({
       closeBrowser: vi.fn(),
+      defaultBrowserFn: defaultBrowserFn2,
       drainInterceptor,
       getCurrentUrl,
       loadSession: vi.fn(),
@@ -227,6 +258,6 @@ describe("workflow runtime", () => {
 
     await captureFinalEvents([]);
 
-    expect(waitForNavigation).toHaveBeenCalledWith("");
+    expect(waitForNavigation).toHaveBeenCalledWith("", expect.any(Function));
   });
 });

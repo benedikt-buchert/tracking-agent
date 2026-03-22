@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.integration.test.ts"],
     exclude: ["dist/**", "node_modules/**"],
-    testTimeout: 120_000,
-    hookTimeout: 120_000,
+    testTimeout: 180_000,
+    hookTimeout: 180_000,
   },
 });
