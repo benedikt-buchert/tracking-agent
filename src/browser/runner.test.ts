@@ -665,7 +665,7 @@ describe("runAgentBrowser", () => {
       runAgentBrowser(["open", 'https://example.com?q=a"b'], execFileFn),
     ).resolves.toBe("ok");
     expect(execFileFn).toHaveBeenCalledWith(
-      "agent-browser",
+      expect.stringContaining("agent-browser"),
       ["open", 'https://example.com?q=a"b'],
       { timeout: 30_000 },
       expect.any(Function),

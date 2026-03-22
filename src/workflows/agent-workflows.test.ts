@@ -161,6 +161,10 @@ async function setupWorkflowModule(options: SetupOptions = {}) {
     createConsoleHandler: vi.fn(() => () => undefined),
   }));
 
+  vi.doMock("../browser/tools.js", () => ({
+    createSkipTaskTool: vi.fn(() => ({ name: "skip_task", execute: vi.fn() })),
+  }));
+
   vi.doMock("./runtime.js", () => ({
     PLAYBOOK_FILE: ".tracking-agent-playbook.json",
     SESSION_FILE: ".tracking-agent-session.json",

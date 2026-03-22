@@ -27,6 +27,7 @@ export async function loadRunState(
   eventSchemas: EventSchema[];
   savedMessages: unknown[];
   foundEventNames: string[];
+  skippedEvents: { name: string; reason: string }[];
   loadSchemaFn: LoadSchemaFn;
 }> {
   const loadSchemaFn = schemasDir
@@ -47,6 +48,7 @@ export async function loadRunState(
       eventSchemas: session.eventSchemas,
       savedMessages: session.messages,
       foundEventNames: session.foundEventNames ?? [],
+      skippedEvents: session.skippedEvents ?? [],
       loadSchemaFn,
     };
   }
@@ -62,7 +64,7 @@ export async function loadRunState(
   process.stderr.write(
     chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`),
   );
-  return { eventSchemas, savedMessages: [], foundEventNames: [], loadSchemaFn };
+  return { eventSchemas, savedMessages: [], foundEventNames: [], skippedEvents: [], loadSchemaFn };
 }
 
 export async function openBrowser(

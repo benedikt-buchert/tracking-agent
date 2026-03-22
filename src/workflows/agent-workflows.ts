@@ -1,6 +1,7 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import chalk from "chalk";
 import type { allTools } from "../browser/tools.js";
+import { createSkipTaskTool } from "../browser/tools.js";
 import type { EventSchema } from "../schema.js";
 import {
   extractPlaybookSteps,
@@ -37,7 +38,9 @@ function attachTaskListDisplay(
           .map((t) =>
             t.status === "found"
               ? chalk.green(`  ✓ ${t.eventName}`)
-              : chalk.dim(`  ✗ ${t.eventName}`),
+              : t.status === "skipped"
+                ? chalk.yellow(`  ~ ${t.eventName}`)
+                : chalk.dim(`  ✗ ${t.eventName}`),
           )
           .join("\n") +
         "\n";
@@ -91,6 +94,7 @@ function attachSessionPersistence(
   targetUrl: string,
   eventSchemas: EventSchema[],
   getAccumulatedEvents: () => unknown[] = () => [],
+  getTaskList?: () => TaskList,
 ): void {
   agent.subscribe(async (event) => {
     if (event.type === "turn_end") {
@@ -105,12 +109,19 @@ function attachSessionPersistence(
               (e as Record<string, unknown>)["event"] === name,
           ),
         );
+      const taskList = getTaskList?.();
+      const skippedEvents = taskList
+        ? taskList.tasks
+            .filter((t) => t.status === "skipped")
+            .map((t) => ({ name: t.eventName, reason: t.skipReason ?? "" }))
+        : undefined;
       const session: AgentSession = {
         schemaUrl,
         targetUrl,
         eventSchemas,
         messages: agent.state.messages,
         foundEventNames,
+        ...(skippedEvents && skippedEvents.length > 0 ? { skippedEvents } : {}),
       };
       await saveSession(SESSION_FILE, session).catch(() => {
         /* non-fatal */
@@ -126,10 +137,11 @@ function createConfiguredAgent(
   eventSchemas: EventSchema[],
   purpose: string,
   getAccumulatedEvents: () => unknown[] = () => [],
+  getTaskList?: () => TaskList,
 ): Agent {
   const agent = createAgent(purpose);
   agent.setTools(agentTools);
-  attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas, getAccumulatedEvents);
+  attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas, getAccumulatedEvents, getTaskList);
   agent.subscribe(createConsoleHandler());
   return agent;
 }
@@ -168,6 +180,7 @@ export async function runReplayMode(
     ),
   );
 
+  const taskList = createTaskList(eventSchemas);
   const agent = createConfiguredAgent(
     agentTools,
     schemaUrl,
@@ -175,15 +188,16 @@ export async function runReplayMode(
     eventSchemas,
     "replay recovery after deterministic execution got stuck",
     () => accumulatedEvents,
+    () => taskList,
   );
   const agentSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, agentSteps, () => recording);
 
-  const taskList = createTaskList(eventSchemas);
   const baseSystemPrompt = createSystemPrompt();
   taskList.update(accumulatedEvents);
   agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+  agent.setTools([...agentTools, createSkipTaskTool(taskList)]);
   attachTaskListDisplay(agent, taskList, accumulatedEvents);
   agent.subscribe((event) => {
     if (event.type === "turn_end") {
@@ -242,6 +256,7 @@ export async function runInteractiveMode(
   agentTools: typeof allTools,
   accumulatedEvents: unknown[] = [],
   foundEventNames: string[] = [],
+  skippedEvents: { name: string; reason: string }[] = [],
 ): Promise<void> {
   const taskList = createTaskList(eventSchemas);
   const baseSystemPrompt = createSystemPrompt();
@@ -249,6 +264,9 @@ export async function runInteractiveMode(
   // Pre-populate task list from previous session so resume shows accurate state
   for (const name of foundEventNames) {
     taskList.update([{ event: name }]);
+  }
+  for (const { name, reason } of skippedEvents) {
+    taskList.skip(name, reason);
   }
 
   const agent = createConfiguredAgent(
@@ -260,7 +278,9 @@ export async function runInteractiveMode(
       ? "resuming an unfinished agent-assisted session"
       : "exploring the site when deterministic execution is insufficient",
     () => accumulatedEvents,
+    () => taskList,
   );
+  agent.setTools([...agentTools, createSkipTaskTool(taskList)]);
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, recordedSteps, () => recording);

@@ -106,6 +106,68 @@ describe("createTaskList", () => {
       const tl = createTaskList([]);
       expect(tl.format()).toContain("0/0");
     });
+
+    it("shows skipped tasks with ~ marker", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "no checkout");
+      expect(tl.format()).toMatch(/~.*purchase/);
+    });
+
+    it("includes the skip reason in format output", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "no checkout");
+      expect(tl.format()).toContain("no checkout");
+    });
+
+    it("shows skipped count in the header", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "reason");
+      expect(tl.format()).toContain("1 skipped");
+    });
+
+    it("does not show skipped tasks in Still needed section", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "reason");
+      const fmt = tl.format();
+      const stillNeededIdx = fmt.indexOf("Still needed");
+      const skippedSectionIdx = fmt.indexOf("Skipped");
+      // purchase should only appear after the Skipped header, not in Still needed
+      const purchaseIdx = fmt.indexOf("purchase");
+      expect(purchaseIdx).toBeGreaterThan(skippedSectionIdx);
+      expect(stillNeededIdx).toBeLessThan(skippedSectionIdx);
+    });
+  });
+
+  describe("skip()", () => {
+    it("marks a pending task as skipped", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "no checkout flow");
+      expect(tl.tasks.find((t) => t.eventName === "purchase")?.status).toBe("skipped");
+    });
+
+    it("stores the skip reason on the task", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "no checkout flow");
+      expect(tl.tasks.find((t) => t.eventName === "purchase")?.skipReason).toBe("no checkout flow");
+    });
+
+    it("does not change foundCount", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "reason");
+      expect(tl.foundCount).toBe(0);
+    });
+
+    it("does not affect a task that is already found", () => {
+      const tl = createTaskList(schemas);
+      tl.update([{ event: "purchase" }]);
+      tl.skip("purchase", "too late");
+      expect(tl.tasks.find((t) => t.eventName === "purchase")?.status).toBe("found");
+    });
+
+    it("ignores unknown event names silently", () => {
+      const tl = createTaskList(schemas);
+      expect(() => tl.skip("unknown_event", "reason")).not.toThrow();
+    });
   });
 
   describe("formatCompact()", () => {
@@ -141,6 +203,12 @@ describe("createTaskList", () => {
 
     it("handles empty schema list without throwing", () => {
       expect(() => createTaskList([]).formatCompact()).not.toThrow();
+    });
+
+    it("marks skipped events with ~", () => {
+      const tl = createTaskList(schemas);
+      tl.skip("purchase", "reason");
+      expect(tl.formatCompact()).toMatch(/~.*purchase/);
     });
   });
 });

@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
+import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import type { EventSchema } from "../schema.js";
 import {
   validateEvent,
@@ -35,25 +36,35 @@ type ExecFileError = Error & {
   stderr?: string;
 };
 
+/**
+ * Resolve the agent-browser binary, preferring the local node_modules/.bin
+ * version over a global install to avoid version mismatches.
+ */
+export function resolveAgentBrowserBin(): string {
+  const localBin = resolve("node_modules", ".bin", "agent-browser");
+  if (existsSync(localBin)) return localBin;
+  return "agent-browser";
+}
+
 export function runAgentBrowser(
   args: string[],
   execFileFn: ExecFileFn = execFile,
 ): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((res) => {
     execFileFn(
-      "agent-browser",
+      resolveAgentBrowserBin(),
       args,
       { timeout: 30_000 },
       (err, stdout, stderr) => {
         if (err) {
           const execErr = err as ExecFileError;
-          resolve(
+          res(
             execErr.stdout?.trim() ||
               execErr.stderr?.trim() ||
               stderr?.trim() ||
               err.message,
           );
-        } else resolve(stdout?.trim() || stderr?.trim() || "");
+        } else res(stdout?.trim() || stderr?.trim() || "");
       },
     );
   });
@@ -526,6 +537,7 @@ export interface AgentSession {
   eventSchemas: EventSchema[];
   messages: unknown[];
   foundEventNames?: string[];
+  skippedEvents?: { name: string; reason: string }[];
 }
 
 export async function saveSession(

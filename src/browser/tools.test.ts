@@ -882,25 +882,23 @@ describe("createDataLayerInterceptor", () => {
   it("captures delayed click events during the settle window", async () => {
     const acc: unknown[] = [];
     const sleepFn = vi.fn().mockResolvedValue(undefined);
-    const interceptBrowserFn = vi
+    // drain before, drain after, then single settle drain
+    const interceptBrowserFn = (vi
       .fn()
-      .mockResolvedValueOnce("[]")
-      .mockResolvedValueOnce("[]")
-      .mockResolvedValueOnce("[]")
-      .mockResolvedValueOnce("[]")
-      .mockResolvedValueOnce(JSON.stringify([{ event: "delayed_click" }]))
-      .mockResolvedValueOnce("[]") as unknown as BrowserFn;
+      .mockResolvedValueOnce("[]") // drain before execute
+      .mockResolvedValueOnce("[]") // drain after execute
+      .mockResolvedValueOnce(JSON.stringify([{ event: "delayed_click" }])) // settle drain
+    ) as unknown as BrowserFn;
     const intercept = createDataLayerInterceptor(acc, interceptBrowserFn, {
       settleMs: 250,
-      settleIntervalMs: 50,
       sleepFn,
     });
     const tool = intercept(createClickTool(mockBrowser("ok")));
 
     await tool.execute("1", { selector: "@e1" });
 
-    expect(sleepFn).toHaveBeenCalledTimes(5);
-    expect(sleepFn).toHaveBeenCalledWith(50);
+    expect(sleepFn).toHaveBeenCalledTimes(1);
+    expect(sleepFn).toHaveBeenCalledWith(250);
     expect(acc).toEqual([{ event: "delayed_click" }]);
   });
 
