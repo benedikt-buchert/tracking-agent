@@ -22,10 +22,25 @@ Demo schema:
 
 ## Installation
 
+Prerequisites:
+
+- Node.js 20+
+- npm
+- Chrome installed via `tracking-agent-install-browser`
+
+Install from npm:
+
 ```bash
-npm install
-npm run build
-agent-browser install   # installs Chrome for browser automation
+npm install -g tracking-agent
+tracking-agent-install-browser
+```
+
+That installs the `tracking-agent` CLI globally so you can run it from any directory.
+
+Verify the install:
+
+```bash
+tracking-agent --help
 ```
 
 ## Usage
@@ -58,6 +73,18 @@ Validation runs locally using [AJV](https://ajv.js.org/). No external validator 
 | `GOOGLE_CLOUD_LOCATION` | Required for `google-vertex` provider |
 
 For Google Vertex auth: `gcloud auth application-default login`
+
+## Publishing
+
+The npm publish workflow lives in [`.github/workflows/publish.yml`](.github/workflows/publish.yml).
+
+Before publishing:
+
+- set the package version in `package.json`
+- configure npm trusted publishing for `benedikt-buchert/tracking-agent` and this workflow
+- create a GitHub release, or run the workflow manually
+
+This workflow uses GitHub OIDC trusted publishing, so no npm token secret is required.
 
 ## Quick start
 

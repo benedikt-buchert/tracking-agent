@@ -3,11 +3,22 @@
   "version": "0.1.0",
   "description": "Browser-based tracking validation agent using agent-browser + pi-agent-core",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benedikt-buchert/tracking-agent.git"
+  },
+  "files": [
+    "dist",
+    "prompts",
+    "README.md"
+  ],
   "bin": {
-    "tracking-agent": "dist/run.js"
+    "tracking-agent": "dist/run.js",
+    "tracking-agent-install-browser": "dist/install-browser.js"
   },
   "scripts": {
     "build": "tsc",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "start": "node dist/run.js",
     "dev": "npx tsx --env-file=.env src/run.ts",

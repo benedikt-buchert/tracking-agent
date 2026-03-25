@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import type { PathLike } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -8,6 +9,7 @@ import {
   runBrowserEval,
   parseBrowserJsonArray,
   getCurrentUrl,
+  resolveAgentBrowserBin,
   resolveSchemaForEvent,
   validateAll,
   generateReport,
@@ -56,6 +58,52 @@ const ENTRY_URL = "https://example.com/schemas/entry.json";
 describe("DATA_LAYER_BRIDGE_STORAGE_KEY", () => {
   it("has the expected storage key value", () => {
     expect(DATA_LAYER_BRIDGE_STORAGE_KEY).toBe("__tracking_agent_dl_events__");
+  });
+});
+
+describe("resolveAgentBrowserBin", () => {
+  it("prefers the package-local dependency binary over the current working directory", () => {
+    const existsSyncFn = vi.fn((path: PathLike) =>
+      String(path).endsWith("/package-root/node_modules/.bin/agent-browser"),
+    );
+
+    const result = resolveAgentBrowserBin(
+      existsSyncFn,
+      "/repo/elsewhere",
+      "/package-root",
+    );
+
+    expect(result).toBe("/package-root/node_modules/.bin/agent-browser");
+    expect(existsSyncFn).toHaveBeenNthCalledWith(
+      1,
+      "/package-root/node_modules/.bin/agent-browser",
+    );
+  });
+
+  it("falls back to the cwd dependency binary when the package-local binary is unavailable", () => {
+    const existsSyncFn = vi.fn((path: PathLike) =>
+      String(path).endsWith("/repo/node_modules/.bin/agent-browser"),
+    );
+
+    const result = resolveAgentBrowserBin(
+      existsSyncFn,
+      "/repo",
+      "/package-root",
+    );
+
+    expect(result).toBe("/repo/node_modules/.bin/agent-browser");
+  });
+
+  it("falls back to the PATH binary when no local dependency binary exists", () => {
+    const existsSyncFn = vi.fn().mockReturnValue(false);
+
+    const result = resolveAgentBrowserBin(
+      existsSyncFn,
+      "/repo",
+      "/package-root",
+    );
+
+    expect(result).toBe("agent-browser");
   });
 });
 
@@ -480,11 +528,17 @@ describe("saveReportFolder", () => {
     const { readFile } = await import("fs/promises");
     // "(unnamed)" is sanitized to "_unnamed_" by the filename regex
     const unnamed = JSON.parse(
-      await readFile(join(folderPath, "events-by-type", "_unnamed_.json"), "utf8"),
+      await readFile(
+        join(folderPath, "events-by-type", "_unnamed_.json"),
+        "utf8",
+      ),
     );
     expect(unnamed).toHaveLength(3);
     const purchases = JSON.parse(
-      await readFile(join(folderPath, "events-by-type", "purchase.json"), "utf8"),
+      await readFile(
+        join(folderPath, "events-by-type", "purchase.json"),
+        "utf8",
+      ),
     );
     expect(purchases).toHaveLength(1);
   });
@@ -1021,12 +1075,12 @@ describe("extractPlaybookSteps", () => {
 
   it("returns null when a fenced block contains a valid JSON non-array (e.g. an object)", () => {
     // isValidSteps receives a non-array, hits the !Array.isArray branch → returns false
-    const text = "```json\n{\"tool\":\"nav\",\"args\":{}}\n```";
+    const text = '```json\n{"tool":"nav","args":{}}\n```';
     expect(extractPlaybookSteps(text)).toBeNull();
   });
 
   it("returns null when a fenced block contains a non-array primitive", () => {
-    const text = "```json\n\"a string\"\n```";
+    const text = '```json\n"a string"\n```';
     expect(extractPlaybookSteps(text)).toBeNull();
   });
 });
@@ -1125,9 +1179,7 @@ describe("drainInterceptor", () => {
   });
 
   it("returns an empty array when browser returns a JSON boolean", async () => {
-    const browserFn = vi
-      .fn()
-      .mockResolvedValue("true") as unknown as BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue("true") as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([]);
   });
@@ -1145,15 +1197,13 @@ describe("drainInterceptor", () => {
 
   it("handles object result where recoveredCount field is not a number", async () => {
     // parseInterceptorObjectResult: recoveredCount branch → else 0 (no warning)
-    const browserFn = vi
-      .fn()
-      .mockResolvedValue(
-        JSON.stringify({
-          events: [{ event: "purchase" }],
-          recoveredCount: "one",
-          recoveredEvents: [],
-        }),
-      ) as unknown as BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ event: "purchase" }],
+        recoveredCount: "one",
+        recoveredEvents: [],
+      }),
+    ) as unknown as BrowserFn;
     const result = await drainInterceptor(browserFn);
     expect(result).toEqual([{ event: "purchase" }]);
   });
@@ -1170,11 +1220,12 @@ describe("drainInterceptor", () => {
   it("does not warn for on-page events that were never across a navigation boundary", async () => {
     // Simulate a same-page drain: interceptor already installed (recoveredCount=0)
     // even though there are real events. The warning must NOT fire.
-    const browserFn = vi
-      .fn()
-      .mockResolvedValue(
-        JSON.stringify({ events: [{ event: "add_to_cart" }], recoveredCount: 0 }),
-      ) as unknown as BrowserFn;
+    const browserFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        events: [{ event: "add_to_cart" }],
+        recoveredCount: 0,
+      }),
+    ) as unknown as BrowserFn;
     const writeSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);

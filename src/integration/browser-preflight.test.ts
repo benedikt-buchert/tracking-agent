@@ -87,14 +87,12 @@ describe("ensureBrowserIntegrationReady", () => {
 
     await expect(
       ensureBrowserIntegrationReady(runAgentBrowser),
-    ).rejects.toThrow("agent-browser install");
+    ).rejects.toThrow("tracking-agent-install-browser");
   });
 
   it("sets checked=true so a second call skips the browser runner", async () => {
     const ensureBrowserIntegrationReady = await loadFreshModule();
-    const runAgentBrowser = vi
-      .fn()
-      .mockResolvedValue('{"success":true}');
+    const runAgentBrowser = vi.fn().mockResolvedValue('{"success":true}');
 
     await ensureBrowserIntegrationReady(runAgentBrowser);
     await ensureBrowserIntegrationReady(runAgentBrowser);

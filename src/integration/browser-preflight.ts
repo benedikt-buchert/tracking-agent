@@ -30,7 +30,7 @@ export async function ensureBrowserIntegrationReady(
     if (!result.includes('"success":true')) {
       throw new Error(
         `agent-browser preflight failed: ${result || "empty output"}\n` +
-          `Run 'agent-browser install' once and retry if browser binaries are missing.`,
+          `Run 'tracking-agent-install-browser' once and retry if browser binaries are missing.`,
       );
     }
 

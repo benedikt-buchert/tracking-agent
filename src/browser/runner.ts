@@ -2,12 +2,10 @@ import { execFile } from "child_process";
 import { randomBytes } from "crypto";
 import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
+import { fileURLToPath } from "url";
 import type { EventSchema } from "../schema.js";
-import {
-  validateEvent,
-  defaultLoadSchema,
-} from "../validation/index.js";
+import { validateEvent, defaultLoadSchema } from "../validation/index.js";
 import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
 
 export type { ValidationResult };
@@ -46,9 +44,25 @@ type ExecFileError = Error & {
  * Resolve the agent-browser binary, preferring the local node_modules/.bin
  * version over a global install to avoid version mismatches.
  */
-export function resolveAgentBrowserBin(): string {
-  const localBin = resolve("node_modules", ".bin", "agent-browser");
-  if (existsSync(localBin)) return localBin;
+export function resolveAgentBrowserBin(
+  existsSyncFn: typeof existsSync = existsSync,
+  cwd: string = process.cwd(),
+  packageRoot: string = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../..",
+  ),
+): string {
+  const packageLocalBin = resolve(
+    packageRoot,
+    "node_modules",
+    ".bin",
+    "agent-browser",
+  );
+  if (existsSyncFn(packageLocalBin)) return packageLocalBin;
+
+  const cwdLocalBin = resolve(cwd, "node_modules", ".bin", "agent-browser");
+  if (existsSyncFn(cwdLocalBin)) return cwdLocalBin;
+
   return "agent-browser";
 }
 
