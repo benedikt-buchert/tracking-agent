@@ -164,9 +164,8 @@ describe("project verification config", () => {
     expect(existsSync(workflowPath)).toBe(true);
 
     const workflow = readFileSync(workflowPath, "utf8");
-    expect(workflow).toContain("actions/configure-pages");
-    expect(workflow).toContain("actions/upload-pages-artifact");
-    expect(workflow).toContain("actions/deploy-pages");
+    expect(workflow).toContain("JamesIves/github-pages-deploy-action");
+    expect(workflow).toContain("gh-pages");
     expect(workflow).toContain("integration-site");
   });
 });
