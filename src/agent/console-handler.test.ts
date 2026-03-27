@@ -2,6 +2,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { createConsoleHandler } from "./console-handler.js";
+import { createLogger } from "../cli/logger.js";
+
+/** Creates a logger that captures all output into the given array. */
+const testLog = (arr: string[]) => createLogger("normal", (s) => arr.push(s));
 
 // Minimal stub for AssistantMessage used in events
 const stubMsg: AssistantMessage = {
@@ -61,7 +65,7 @@ describe("createConsoleHandler", () => {
   });
 
   it("uses process.stdout and process.stderr when called with no arguments", () => {
-    // Covers the default-arg branches at L70 and L73
+    // Covers the default-arg branches — default Logger writes to stderr
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
@@ -96,21 +100,21 @@ describe("createConsoleHandler", () => {
 
   it("writes tool name to err stream on tool_execution_start", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeToolStart("browser_snapshot"));
     expect(err.join("")).toContain("browser_snapshot");
   });
 
   it("does not add a separator when a tool has no summary detail", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeToolStart("browser_snapshot"));
     expect(err.join("")).not.toContain("—");
   });
 
   it("shows the URL arg for browser_navigate", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -122,7 +126,7 @@ describe("createConsoleHandler", () => {
 
   it("shows selector info for browser_click", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -134,7 +138,7 @@ describe("createConsoleHandler", () => {
 
   it("falls back to text for browser_click when selector is absent", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -146,7 +150,7 @@ describe("createConsoleHandler", () => {
 
   it("shows selector and value for browser_fill", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -158,7 +162,7 @@ describe("createConsoleHandler", () => {
 
   it("falls back to text for browser_fill when value is absent", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -170,7 +174,7 @@ describe("createConsoleHandler", () => {
 
   it("shows locator and value for browser_find", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -182,7 +186,7 @@ describe("createConsoleHandler", () => {
 
   it("truncates browser_eval summaries to 60 characters", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     const expression = "x".repeat(80);
     handler({
       type: "tool_execution_start",
@@ -196,7 +200,7 @@ describe("createConsoleHandler", () => {
 
   it("falls back to js for browser_eval when expression is absent", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -208,7 +212,7 @@ describe("createConsoleHandler", () => {
 
   it("shows load state for browser_wait before selector or timeout", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -221,7 +225,7 @@ describe("createConsoleHandler", () => {
 
   it("falls back to timeout for browser_wait when no other target exists", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -233,7 +237,7 @@ describe("createConsoleHandler", () => {
 
   it("falls back to selector for browser_wait when load is absent", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -245,7 +249,7 @@ describe("createConsoleHandler", () => {
 
   it("shows from_index for get_datalayer", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -257,7 +261,7 @@ describe("createConsoleHandler", () => {
 
   it("defaults get_datalayer to index 0 when from_index is absent", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -269,7 +273,7 @@ describe("createConsoleHandler", () => {
 
   it("truncates request_human_input messages to 80 characters", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     const message = "a".repeat(100);
     handler({
       type: "tool_execution_start",
@@ -293,7 +297,7 @@ describe("createConsoleHandler", () => {
     const err: string[] = [];
     const handler = createConsoleHandler(
       (s) => out.push(s),
-      (s) => err.push(s),
+      testLog(err),
     );
     handler({ type: "agent_start" });
     handler({ type: "turn_start" });
@@ -303,14 +307,14 @@ describe("createConsoleHandler", () => {
 
   it("writes API error message to err stream on turn_end with stopReason error", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("400 Your credit balance is too low"));
     expect(err.join("")).toContain("400 Your credit balance is too low");
   });
 
   it("falls back to Unknown error when the turn_end event has no errorMessage", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "turn_end",
       message: { ...stubMsg, stopReason: "error" as const },
@@ -321,7 +325,7 @@ describe("createConsoleHandler", () => {
 
   it("includes a hint to check billing on credit error", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(
       makeTurnEndError(
         "400 Your credit balance is too low to access the Anthropic API",
@@ -333,7 +337,7 @@ describe("createConsoleHandler", () => {
   it("uses the OpenAI billing URL when MODEL_PROVIDER=openai", () => {
     const err: string[] = [];
     process.env["MODEL_PROVIDER"] = "openai";
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("Quota exceeded for this API key"));
     expect(err.join("")).toContain("platform.openai.com/settings/billing");
   });
@@ -342,7 +346,7 @@ describe("createConsoleHandler", () => {
     // Kills ConditionalExpression "true" on getBillingUrl (always openai)
     const err: string[] = [];
     delete process.env["MODEL_PROVIDER"];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("credit balance is too low"));
     expect(err.join("")).toContain("console.anthropic.com");
     expect(err.join("")).not.toContain("openai");
@@ -350,7 +354,7 @@ describe("createConsoleHandler", () => {
 
   it("does not add a billing hint for generic non-billing errors", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).not.toContain("Hint: Add credits");
   });
@@ -358,7 +362,7 @@ describe("createConsoleHandler", () => {
   it("billing hint contains Hint text for credit errors", () => {
     // Kills ConditionalExpression "false" (hint always empty) on getBillingHint
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("credit balance is too low"));
     expect(err.join("")).toContain("Hint:");
   });
@@ -366,14 +370,14 @@ describe("createConsoleHandler", () => {
   it("billing hint is shown when error contains only billing keyword", () => {
     // Kills LogicalOperator || → && on getBillingHint (billing alone must be enough)
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("rate limit exceeded due to billing issue"));
     expect(err.join("")).toContain("Hint:");
   });
 
   it("billing hint is shown when error contains only quota keyword", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("quota exceeded for this month"));
     expect(err.join("")).toContain("Hint:");
   });
@@ -381,7 +385,7 @@ describe("createConsoleHandler", () => {
   it("does not write error on turn_end with non-error stopReason", () => {
     // Kills ConditionalExpression "true" on the turn_end stopReason==="error" guard
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "turn_end",
       message: { ...stubMsg, stopReason: "stop" as const },
@@ -392,7 +396,7 @@ describe("createConsoleHandler", () => {
 
   it("surfaces generic API errors clearly", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("401 Invalid API key"));
     expect(err.join("")).toContain("401 Invalid API key");
   });
@@ -411,14 +415,14 @@ describe("createConsoleHandler", () => {
 
   it("includes the cyan arrow character in tool execution output", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeToolStart("browser_navigate"));
     expect(err.join("")).toContain("▶");
   });
 
   it("formats the tool detail with a space-em-dash-space separator", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler({
       type: "tool_execution_start",
       toolCallId: "t1",
@@ -430,14 +434,14 @@ describe("createConsoleHandler", () => {
 
   it("includes 'Agent error:' prefix in the error output", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("500 Internal Server Error"));
     expect(err.join("")).toContain("Agent error:");
   });
 
   it("non-billing errors do not append extra text after the error message", () => {
     const err: string[] = [];
-    const handler = createConsoleHandler(undefined, (s) => err.push(s));
+    const handler = createConsoleHandler(undefined, testLog(err));
     handler(makeTurnEndError("401 Unauthorized"));
     const plain = err.join("").replace(/\x1B\[[0-9;]*m/g, "");
     expect(plain.trim()).toMatch(/401 Unauthorized$/);

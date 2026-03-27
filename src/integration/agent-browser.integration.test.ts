@@ -14,9 +14,12 @@ import { createLocalFirstLoader } from "../validation/index.js";
 import { discoverEventSchemas } from "../schema.js";
 import {
   SCHEMA_URL,
+  TEST_CREDENTIALS_PATH,
+  credentialsPlaybook,
   fixtureScenarios,
   startFixtureSiteServer,
 } from "./site-fixture.js";
+import { loadCredentials } from "../credentials.js";
 
 const FIXTURES_SCHEMAS_DIR = join(import.meta.dirname, "fixtures");
 const loadSchemaFn = createLocalFirstLoader(FIXTURES_SCHEMAS_DIR);
@@ -263,5 +266,50 @@ describe.sequential("agent-browser integration fixture", () => {
     );
 
     expect(observedNames.has("purchase")).toBe(true);
+  });
+
+  it("replays the credentials playbook using fill_credential for sensitive form fields", async () => {
+    const server = await startFixtureSiteServer();
+    closers.push(server.close);
+
+    const eventSchemas = await discoverEventSchemas(
+      SCHEMA_URL,
+      "web-datalayer-js",
+      loadSchemaFn,
+    );
+    const credentialStore = await loadCredentials(TEST_CREDENTIALS_PATH);
+    const accumulatedEvents: unknown[] = [];
+    const { tools, browserFn } = buildAgentTools(accumulatedEvents, true, undefined, credentialStore);
+    sessionBrowserFns.push(browserFn);
+
+    await navigateTo(`${server.baseUrl}/deterministic/`, browserFn);
+
+    const replayResult = await replayPlaybook(
+      credentialsPlaybook,
+      async (step) => {
+        const tool = tools.find((candidate) => candidate.name === step.tool);
+        if (!tool) throw new Error(`Missing tool ${step.tool}`);
+        const result = await tool.execute("integration", step.args as never);
+        return (result.content[0] as { text?: string }).text ?? "";
+      },
+    );
+
+    expect(replayResult.stuckAtIndex).toBe(-1);
+
+    const observedEvents = await captureDataLayer(0, browserFn);
+    expect(observedEvents).toHaveLength(4);
+
+    const results = await validateAll(
+      observedEvents,
+      eventSchemas,
+      SCHEMA_URL,
+      loadSchemaFn,
+    );
+    const validEvents = results
+      .filter((result) => result.result.valid)
+      .map((result) => result.eventName);
+    expect(validEvents).toEqual(
+      expect.arrayContaining(["purchase", "address_submitted"]),
+    );
   });
 });

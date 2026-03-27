@@ -4,6 +4,8 @@ import { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 import type { EventSchema } from "../schema.js";
 import { validateEvent, defaultLoadSchema } from "../validation/index.js";
 import type { ValidationResult, LoadSchemaFn } from "../validation/index.js";
@@ -508,6 +510,7 @@ export async function captureDataLayer(
 
 export async function drainInterceptor(
   browser: BrowserFn = defaultBrowserFn,
+  log: Logger = createLogger(),
 ): Promise<unknown[]> {
   const js = [
     "(function() {",
@@ -557,7 +560,7 @@ export async function drainInterceptor(
       const eventNames = recoveredEventNames(result.recoveredEvents);
       const namesSuffix =
         eventNames.length > 0 ? `: ${eventNames.join(", ")}` : "";
-      process.stderr.write(
+      log.warn(
         `Warning: recovered ${result.recoveredCount} dataLayer event(s) across a page navigation boundary${namesSuffix}. These were fired while leaving the page, so GTM timing may be unreliable on the live site.\n`,
       );
     }

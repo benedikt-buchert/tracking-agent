@@ -12,7 +12,10 @@ export function buildHelpText(): string {
     `    ${chalk.cyan("--schemas-dir")}  Local directory of schema files (used instead of remote fetches)\n` +
     `    ${chalk.cyan("--resume")}  Resume a previous session from .tracking-agent-session.json\n` +
     `    ${chalk.cyan("--replay")}    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)\n` +
+    `    ${chalk.cyan("--credentials")}  Path to a JSON file with credential fields (see docs)\n` +
     `    ${chalk.cyan("--headless")}  Run the browser in the background (no visible window)\n` +
+    `    ${chalk.cyan("--quiet")}     Suppress all progress output (only errors and the final report)\n` +
+    `    ${chalk.cyan("--verbose")}   Show detailed step-by-step progress\n` +
     `    ${chalk.cyan("--help")}      Show this help message\n\n` +
     chalk.bold("  Environment\n") +
     `    ${chalk.cyan("MODEL_PROVIDER")}         AI provider (default: anthropic)\n` +

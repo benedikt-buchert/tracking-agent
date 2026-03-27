@@ -1,6 +1,8 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import chalk from "chalk";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 
 type WriteFn = (s: string) => void;
 type ToolArgs = Record<string, unknown>;
@@ -32,13 +34,13 @@ function toolArgSummary(toolName: string, args: ToolArgs): string {
 }
 
 function writeToolStart(
-  writeErr: WriteFn,
+  log: Logger,
   toolName: string,
   args: ToolArgs,
 ): void {
   const detail = toolArgSummary(toolName, args);
   const suffix = detail ? chalk.dim(` — ${detail}`) : "";
-  writeErr(chalk.dim(`\n  ${chalk.cyan("▶")} ${toolName}${suffix}\n`));
+  log.info(chalk.dim(`\n  ${chalk.cyan("▶")} ${toolName}${suffix}\n`));
 }
 
 function getBillingUrl(provider: string): string {
@@ -59,20 +61,18 @@ function getBillingHint(message: string, provider: string): string {
     : "";
 }
 
-function writeTurnEndError(writeErr: WriteFn, message: AssistantMessage): void {
+function writeTurnEndError(log: Logger, message: AssistantMessage): void {
   const errorMessage = message.errorMessage ?? "Unknown error";
   const provider = process.env["MODEL_PROVIDER"] ?? "anthropic";
   const hint = getBillingHint(errorMessage, provider);
-  writeErr(`\n${chalk.red("✖ Agent error:")} ${errorMessage}${hint}\n`);
+  log.error(`\n${chalk.red("✖ Agent error:")} ${errorMessage}${hint}\n`);
 }
 
 export function createConsoleHandler(
   write: WriteFn = (s) => {
     process.stdout.write(s);
   },
-  writeErr: WriteFn = (s) => {
-    process.stderr.write(s);
-  },
+  log: Logger = createLogger(),
 ): (event: AgentEvent) => void {
   return (event) => {
     if (event.type === "message_update") {
@@ -83,7 +83,7 @@ export function createConsoleHandler(
     }
     if (event.type === "tool_execution_start") {
       writeToolStart(
-        writeErr,
+        log,
         event.toolName,
         event.args as Record<string, unknown>,
       );
@@ -92,7 +92,7 @@ export function createConsoleHandler(
       event.type === "turn_end" &&
       (event.message as AssistantMessage).stopReason === "error"
     ) {
-      writeTurnEndError(writeErr, event.message as AssistantMessage);
+      writeTurnEndError(log, event.message as AssistantMessage);
     }
     if (event.type === "agent_end") {
       write("\n");

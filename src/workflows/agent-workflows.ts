@@ -1,5 +1,7 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import chalk from "chalk";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 import type { allTools } from "../browser/tools.js";
 import { createSkipTaskTool } from "../browser/tools.js";
 import type { EventSchema } from "../schema.js";
@@ -23,13 +25,11 @@ import { createTaskList } from "../agent/task-list.js";
 import type { TaskList } from "../agent/task-list.js";
 import { PLAYBOOK_FILE, SESSION_FILE } from "./runtime.js";
 
-type WriteErrFn = (s: string) => void;
-
 function attachTaskListDisplay(
   agent: Agent,
   taskList: TaskList,
   accumulatedEvents: unknown[],
-  writeErr: WriteErrFn = (s) => process.stderr.write(s),
+  log: Logger = createLogger(),
 ): void {
   agent.subscribe((event) => {
     if (event.type === "turn_start") {
@@ -44,16 +44,14 @@ function attachTaskListDisplay(
           )
           .join("\n") +
         "\n";
-      writeErr(header);
+      log.info(header);
     }
     if (
       event.type === "tool_execution_end" &&
       isActionTool((event as { toolName: string }).toolName)
     ) {
       taskList.update(accumulatedEvents);
-      writeErr(
-        chalk.dim(`  ◈ ${taskList.formatCompact()}\n`),
-      );
+      log.info(chalk.dim(`  ◈ ${taskList.formatCompact()}\n`));
     }
   });
 }
@@ -138,11 +136,12 @@ function createConfiguredAgent(
   purpose: string,
   getAccumulatedEvents: () => unknown[] = () => [],
   getTaskList?: () => TaskList,
+  log: Logger = createLogger(),
 ): Agent {
   const agent = createAgent(purpose);
   agent.setTools(agentTools);
   attachSessionPersistence(agent, schemaUrl, targetUrl, eventSchemas, getAccumulatedEvents, getTaskList);
-  agent.subscribe(createConsoleHandler());
+  agent.subscribe(createConsoleHandler(undefined, log));
   return agent;
 }
 
@@ -152,29 +151,23 @@ export async function runReplayMode(
   eventSchemas: EventSchema[],
   agentTools: typeof allTools,
   accumulatedEvents: unknown[] = [],
+  credentialsSummary = "",
+  log: Logger = createLogger(),
 ): Promise<void> {
-  process.stderr.write(
-    chalk.dim(`  Loading playbook from ${PLAYBOOK_FILE}...\n`),
-  );
+  log.info(chalk.dim(`  Loading playbook from ${PLAYBOOK_FILE}...\n`));
   const playbook = await loadPlaybook(PLAYBOOK_FILE);
-  process.stderr.write(
-    chalk.dim(`  Replaying ${playbook.steps.length} step(s)...\n\n`),
-  );
+  log.info(chalk.dim(`  Replaying ${playbook.steps.length} step(s)...\n\n`));
 
   const executor = makeStepExecutor(agentTools);
   const { stuckAtIndex } = await replayPlaybook(playbook.steps, executor);
 
   if (stuckAtIndex === -1) {
-    process.stderr.write(
-      chalk.dim(
-        `\n  Replay complete — all steps succeeded, skipping agent.\n\n`,
-      ),
-    );
+    log.info(chalk.dim(`\n  Replay complete — all steps succeeded, skipping agent.\n\n`));
     return;
   }
 
   const stuckStep = playbook.steps[stuckAtIndex];
-  process.stderr.write(
+  log.warn(
     chalk.yellow(
       `\n  Replay stuck at step ${stuckAtIndex} (${stuckStep.tool}). Falling back to agent...\n\n`,
     ),
@@ -189,20 +182,22 @@ export async function runReplayMode(
     "replay recovery after deterministic execution got stuck",
     () => accumulatedEvents,
     () => taskList,
+    log,
   );
   const agentSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, agentSteps, () => recording);
 
   const baseSystemPrompt = createSystemPrompt();
+  const credsSuffix = credentialsSummary ? "\n\n" + credentialsSummary : "";
   taskList.update(accumulatedEvents);
-  agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+  agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format() + credsSuffix);
   agent.setTools([...agentTools, createSkipTaskTool(taskList)]);
-  attachTaskListDisplay(agent, taskList, accumulatedEvents);
+  attachTaskListDisplay(agent, taskList, accumulatedEvents, log);
   agent.subscribe((event) => {
     if (event.type === "turn_end") {
       taskList.update(accumulatedEvents);
-      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format() + credsSuffix);
     }
   });
 
@@ -215,9 +210,7 @@ export async function runReplayMode(
   if (agentSteps.length === 0) return;
 
   recording = false;
-  process.stderr.write(
-    chalk.dim(`\n  Asking agent to optimize updated playbook...\n`),
-  );
+  log.info(chalk.dim(`\n  Asking agent to optimize updated playbook...\n`));
 
   const combinedSteps = [
     ...playbook.steps.slice(0, stuckAtIndex),
@@ -240,7 +233,7 @@ export async function runReplayMode(
   }).catch(() => {
     /* non-fatal */
   });
-  process.stderr.write(
+  log.info(
     chalk.dim(
       `  Playbook updated (${stepsToSave.length} step(s), ${source}) — replay should work next time\n`,
     ),
@@ -257,9 +250,12 @@ export async function runInteractiveMode(
   accumulatedEvents: unknown[] = [],
   foundEventNames: string[] = [],
   skippedEvents: { name: string; reason: string }[] = [],
+  credentialsSummary = "",
+  log: Logger = createLogger(),
 ): Promise<void> {
   const taskList = createTaskList(eventSchemas);
   const baseSystemPrompt = createSystemPrompt();
+  const credsSuffix = credentialsSummary ? "\n\n" + credentialsSummary : "";
 
   // Pre-populate task list from previous session so resume shows accurate state
   for (const name of foundEventNames) {
@@ -279,17 +275,19 @@ export async function runInteractiveMode(
       : "exploring the site when deterministic execution is insufficient",
     () => accumulatedEvents,
     () => taskList,
+    log,
   );
+  agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format() + credsSuffix);
   agent.setTools([...agentTools, createSkipTaskTool(taskList)]);
   const recordedSteps: PlaybookStep[] = [];
   let recording = true;
   attachStepRecording(agent, recordedSteps, () => recording);
-  attachTaskListDisplay(agent, taskList, accumulatedEvents);
+  attachTaskListDisplay(agent, taskList, accumulatedEvents, log);
 
   agent.subscribe((event) => {
     if (event.type === "turn_end") {
       taskList.update(accumulatedEvents);
-      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format());
+      agent.setSystemPrompt(baseSystemPrompt + "\n\n" + taskList.format() + credsSuffix);
     }
   });
 
@@ -309,7 +307,7 @@ export async function runInteractiveMode(
   if (resume || recordedSteps.length === 0) return;
 
   recording = false;
-  process.stderr.write(chalk.dim(`\n  Asking agent to optimize playbook...\n`));
+  log.info(chalk.dim(`\n  Asking agent to optimize playbook...\n`));
 
   const rewriteText = await collectAgentText(
     agent,
@@ -326,7 +324,7 @@ export async function runInteractiveMode(
   }).catch(() => {
     /* non-fatal */
   });
-  process.stderr.write(
+  log.info(
     chalk.dim(
       `  Playbook saved (${stepsToSave.length} step(s), ${source}) → use --replay to replay\n`,
     ),

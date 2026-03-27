@@ -5,6 +5,11 @@ import { extname, join, normalize, resolve } from "path";
 export const SCHEMA_URL =
   "https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json";
 
+export type PlaybookStep = {
+  tool: "browser_click" | "browser_fill" | "browser_find" | "browser_wait" | "fill_credential";
+  args: Record<string, string | number>;
+};
+
 export interface FixtureScenario {
   name: "deterministic" | "mutated" | "ephemeral";
   route: "/deterministic/" | "/mutated/" | "/ephemeral/";
@@ -13,10 +18,7 @@ export interface FixtureScenario {
   expectedValidEvents: string[];
   expectedInvalidEvents: string[];
   expectedMissingEvents: string[];
-  deterministicPlaybook: Array<{
-    tool: "browser_click" | "browser_fill" | "browser_find" | "browser_wait";
-    args: Record<string, string | number>;
-  }>;
+  deterministicPlaybook: PlaybookStep[];
 }
 
 const deterministicStablePlaybook: FixtureScenario["deterministicPlaybook"] = [
@@ -275,6 +277,104 @@ export const fixtureScenarios: FixtureScenario[] = [
     deterministicPlaybook: deterministicStablePlaybook,
   },
 ];
+
+/**
+ * A variant of the deterministic playbook that uses `fill_credential`
+ * for sensitive payment fields (card number, CVC) while keeping
+ * non-sensitive fields (email, postal code, etc.) as regular fills.
+ */
+export const credentialsPlaybook: PlaybookStep[] = [
+  {
+    tool: "browser_find",
+    args: { locator: "testid", value: "start-checkout", action: "click" },
+  },
+  {
+    tool: "browser_wait",
+    args: { selector: '[data-testid="broken-cart"]' },
+  },
+  {
+    tool: "browser_find",
+    args: { locator: "testid", value: "broken-cart", action: "click" },
+  },
+  {
+    tool: "browser_find",
+    args: {
+      locator: "testid",
+      value: "email",
+      action: "fill",
+      fill_text: "buyer@example.com",
+    },
+  },
+  {
+    tool: "browser_find",
+    args: {
+      locator: "testid",
+      value: "postal-code",
+      action: "fill",
+      fill_text: "90210",
+    },
+  },
+  {
+    tool: "browser_find",
+    args: {
+      locator: "testid",
+      value: "state",
+      action: "fill",
+      fill_text: "CA",
+    },
+  },
+  {
+    tool: "browser_find",
+    args: { locator: "testid", value: "continue-to-payment", action: "click" },
+  },
+  {
+    tool: "browser_wait",
+    args: { load: "networkidle" },
+  },
+  {
+    tool: "browser_wait",
+    args: { selector: '[data-testid="card-number"]' },
+  },
+  {
+    tool: "fill_credential",
+    args: { field_name: "card_number", selector: '[data-testid="card-number"]' },
+  },
+  {
+    tool: "fill_credential",
+    args: { field_name: "card_cvc", selector: '[data-testid="card-cvc"]' },
+  },
+  {
+    tool: "browser_find",
+    args: {
+      locator: "testid",
+      value: "card-name",
+      action: "fill",
+      fill_text: "Test Buyer",
+    },
+  },
+  {
+    tool: "browser_find",
+    args: { locator: "testid", value: "place-order", action: "click" },
+  },
+  {
+    tool: "browser_wait",
+    args: { load: "networkidle" },
+  },
+  {
+    tool: "browser_wait",
+    args: { selector: '[data-testid="profile-update"]' },
+  },
+  {
+    tool: "browser_find",
+    args: { locator: "testid", value: "profile-update", action: "click" },
+  },
+];
+
+export const TEST_CREDENTIALS_PATH = join(
+  import.meta.dirname,
+  "fixtures",
+  "test-credentials.json",
+);
 
 export function fixtureSiteRoot(): string {
   return resolve(import.meta.dirname, "..", "..", "integration-site");

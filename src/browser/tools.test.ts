@@ -21,10 +21,15 @@ import {
   createGetDataLayerTool,
   createScreenshotTool,
   createFindTool,
+  createFillCredentialTool,
   createAllTools,
   createDataLayerPoller,
   createDataLayerInterceptor,
 } from "./tools.js";
+import type { CredentialStore } from "../credentials.js";
+import { createLogger } from "../cli/logger.js";
+
+const testLog = (arr: string[]) => createLogger("normal", (s) => arr.push(s));
 
 function mockBrowser(response = "ok"): BrowserFn {
   return vi.fn().mockResolvedValue(response) as unknown as BrowserFn;
@@ -634,23 +639,21 @@ describe("requestHumanInputTool", () => {
   it("writes the agent message to the err stream", async () => {
     const written: string[] = [];
     const readLineFn = vi.fn().mockResolvedValue("");
-    const tool = createRequestHumanInputTool(readLineFn, (s) =>
-      written.push(s),
-    );
+    const tool = createRequestHumanInputTool(readLineFn, testLog(written));
     await tool.execute("1", { message: "Please log in first" });
     expect(written.join("")).toContain("Please log in first");
   });
 
   it("calls readLineFn to wait for the user to press Enter", async () => {
     const readLineFn = vi.fn().mockResolvedValue("");
-    const tool = createRequestHumanInputTool(readLineFn, () => {});
+    const tool = createRequestHumanInputTool(readLineFn, createLogger("quiet"));
     await tool.execute("1", { message: "Enter details" });
     expect(readLineFn).toHaveBeenCalledOnce();
   });
 
   it("returns a message indicating the agent may continue", async () => {
     const readLineFn = vi.fn().mockResolvedValue("");
-    const tool = createRequestHumanInputTool(readLineFn, () => {});
+    const tool = createRequestHumanInputTool(readLineFn, createLogger("quiet"));
     const result = await tool.execute("1", {
       message: "Enter payment details",
     });
@@ -669,7 +672,7 @@ describe("requestHumanInputTool", () => {
     const written: string[] = [];
     const tool = createRequestHumanInputTool(
       vi.fn().mockResolvedValue(""),
-      (s) => written.push(s),
+      testLog(written),
       async () => "https://example.com/checkout",
     );
     await tool.execute("1", { message: "Continue manually" });
@@ -680,7 +683,7 @@ describe("requestHumanInputTool", () => {
     const written: string[] = [];
     const tool = createRequestHumanInputTool(
       vi.fn().mockResolvedValue(""),
-      (s) => written.push(s),
+      testLog(written),
       async () => {
         throw new Error("no url");
       },
@@ -1217,5 +1220,83 @@ describe("createFindTool executeTestIdDomAction parsing edge cases", () => {
     expect((result.content[0] as { text: string }).text).toBe(
       "unexpected plain text",
     );
+  });
+});
+
+// ─── createFillCredentialTool ────────────────────────────────────────────────
+
+describe("createFillCredentialTool", () => {
+  function makeStore(
+    fields: Record<string, { description: string; value: string }>,
+  ): CredentialStore {
+    const map = new Map(Object.entries(fields));
+    return {
+      get: (name: string) => map.get(name)?.value,
+      fieldSummary: () =>
+        [...map.entries()].map(([n, f]) => ({
+          name: n,
+          description: f.description,
+        })),
+    };
+  }
+
+  it("fills the element with the credential value via browserFn", async () => {
+    const store = makeStore({
+      email: { description: "Email", value: "a@b.com" },
+    });
+    const browserFn = mockBrowser("Filled");
+    const tool = createFillCredentialTool(store, browserFn);
+
+    await tool.execute("1", { field_name: "email", selector: "#email" });
+
+    expect(browserFn).toHaveBeenCalledWith([
+      "fill",
+      "#email",
+      "a@b.com",
+    ]);
+  });
+
+  it("returns error for unknown field name", async () => {
+    const store = makeStore({
+      email: { description: "Email", value: "a@b.com" },
+    });
+    const tool = createFillCredentialTool(store, mockBrowser("ok"));
+
+    const result = await tool.execute("1", {
+      field_name: "unknown",
+      selector: "#x",
+    });
+
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("unknown");
+    expect(text).toContain("email");
+  });
+
+  it("never includes the credential value in the result text", async () => {
+    const store = makeStore({
+      password: { description: "Password", value: "sup3r-s3cret!" },
+    });
+    const tool = createFillCredentialTool(store, mockBrowser("ok"));
+
+    const result = await tool.execute("1", {
+      field_name: "password",
+      selector: "#pw",
+    });
+
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).not.toContain("sup3r-s3cret!");
+    expect(text).toContain("password");
+  });
+
+  it("has field_name and selector parameters but no value parameter", () => {
+    const store = makeStore({
+      email: { description: "Email", value: "a@b.com" },
+    });
+    const tool = createFillCredentialTool(store, mockBrowser("ok"));
+
+    const schema = tool.parameters;
+    expect(schema.properties).toHaveProperty("field_name");
+    expect(schema.properties).toHaveProperty("selector");
+    expect(schema.properties).not.toHaveProperty("value");
   });
 });

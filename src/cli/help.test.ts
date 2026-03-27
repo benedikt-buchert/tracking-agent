@@ -11,6 +11,9 @@ describe("buildHelpText", () => {
     expect(help).toContain("--schema");
     expect(help).toContain("--url");
     expect(help).toContain("--headless");
+    expect(help).toContain("--quiet");
+    expect(help).toContain("--verbose");
+    expect(help).toContain("--credentials");
     expect(help).toContain("MODEL_PROVIDER");
     expect(help).toContain("GOOGLE_CLOUD_PROJECT");
   });
@@ -43,7 +46,10 @@ describe("buildHelpText", () => {
     --schemas-dir  Local directory of schema files (used instead of remote fetches)
     --resume  Resume a previous session from .tracking-agent-session.json
     --replay    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)
+    --credentials  Path to a JSON file with credential fields (see docs)
     --headless  Run the browser in the background (no visible window)
+    --quiet     Suppress all progress output (only errors and the final report)
+    --verbose   Show detailed step-by-step progress
     --help      Show this help message
 
   Environment

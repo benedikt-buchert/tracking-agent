@@ -420,6 +420,22 @@ describe("buildAgentTools", () => {
     )!;
     expect(headed).not.toBe(headless);
   });
+
+  it("includes fill_credential tool when credentialStore is provided", () => {
+    const store = {
+      get: (name: string) => (name === "email" ? "a@b.com" : undefined),
+      fieldSummary: () => [{ name: "email", description: "Login email" }],
+    };
+    const { tools } = buildAgentTools([], false, undefined, store);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("fill_credential");
+  });
+
+  it("does not include fill_credential tool when no credentialStore", () => {
+    const { tools } = buildAgentTools([], false);
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain("fill_credential");
+  });
 });
 
 // ─── collectAgentText ─────────────────────────────────────────────────────────

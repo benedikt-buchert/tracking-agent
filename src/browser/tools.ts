@@ -1,6 +1,9 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 import type { TaskList } from "../agent/task-list.js";
+import type { CredentialStore } from "../credentials.js";
 import {
   DATA_LAYER_BRIDGE_STORAGE_KEY,
   defaultBrowserFn,
@@ -279,7 +282,6 @@ export function createAccumulatingGetDataLayerTool(
 // ─── Tool: request_human_input ───────────────────────────────────────────────
 
 type ReadLineFn = (prompt: string) => Promise<string>;
-type WriteErrFn = (s: string) => void;
 type ResolveCurrentUrlFn = () => Promise<string>;
 
 async function defaultReadLine(prompt: string): Promise<string> {
@@ -303,7 +305,7 @@ const RequestHumanInputParams = Type.Object({
 
 export function createRequestHumanInputTool(
   readLineFn: ReadLineFn = defaultReadLine,
-  writeErr: WriteErrFn = (s) => process.stderr.write(s),
+  log: Logger = createLogger(),
   resolveCurrentUrl: ResolveCurrentUrlFn = async () => "",
 ): AgentTool<typeof RequestHumanInputParams> {
   return {
@@ -315,9 +317,9 @@ export function createRequestHumanInputTool(
     execute: async (_id, { message }) => {
       const url = await resolveCurrentUrl().catch(() => "");
 
-      writeErr(`\n  ⏸  Agent needs your help:\n  ${message}\n`);
-      if (url) writeErr(`  Browser is at: ${url}\n`);
-      writeErr(
+      log.warn(`\n  ⏸  Agent needs your help:\n  ${message}\n`);
+      if (url) log.warn(`  Browser is at: ${url}\n`);
+      log.warn(
         `  Complete the action in the browser window, then press Enter.\n`,
       );
 
@@ -331,7 +333,7 @@ export function createRequestHumanInputTool(
 
 export const requestHumanInputTool = createRequestHumanInputTool(
   defaultReadLine,
-  (s) => process.stderr.write(s),
+  createLogger(),
   () => runBrowserEval("window.location.href", defaultBrowserFn),
 );
 
@@ -458,6 +460,45 @@ async function executeTestIdDomAction(
 
 export const findTool = createFindTool();
 
+// ─── Tool: fill_credential ───────────────────────────────────────────────────
+
+const FillCredentialParams = Type.Object({
+  field_name: Type.String({
+    description:
+      "The credential field name to use (must match a name from the available credential fields list)",
+  }),
+  selector: Type.String({
+    description: "CSS selector or element ref for the input to fill",
+  }),
+});
+
+export function createFillCredentialTool(
+  store: CredentialStore,
+  browserFn: BrowserFn = defaultBrowserFn,
+): AgentTool<typeof FillCredentialParams> {
+  return {
+    name: "fill_credential",
+    description:
+      "Fill a form field using a stored credential value. The value is applied securely without being visible to you. Use this instead of browser_fill when a matching credential field is available.",
+    label: "Filling credential",
+    parameters: FillCredentialParams,
+    execute: async (_id, { field_name, selector }) => {
+      const value = store.get(field_name);
+      if (value === undefined) {
+        const available = store
+          .fieldSummary()
+          .map((f) => f.name)
+          .join(", ");
+        return textResult(
+          `Unknown credential field "${field_name}". Available fields: ${available}`,
+        );
+      }
+      await browserFn(["fill", selector, value]);
+      return textResult(`Filled credential "${field_name}" into ${selector}`);
+    },
+  };
+}
+
 // ─── Tool: skip_task ──────────────────────────────────────────────────────────
 
 const SkipTaskParams = Type.Object({
@@ -549,6 +590,7 @@ export function createDataLayerInterceptor(
     settleMs = 300,
     sleepFn = defaultSleep,
   }: DataLayerInterceptorOptions = {},
+  log: Logger = createLogger(),
 ): (tool: AnyTool) => AnyTool {
   const appendUniqueEvents = (events: unknown[]) => {
     if (events.length === 0) return;
@@ -558,7 +600,7 @@ export function createDataLayerInterceptor(
 
   const drainIntoAccumulator = async () => {
     try {
-      const newEvents = await drainInterceptor(browserFn);
+      const newEvents = await drainInterceptor(browserFn, log);
       appendUniqueEvents(newEvents);
     } catch {
       /* non-fatal */
@@ -589,10 +631,11 @@ export function createDataLayerInterceptor(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createAllTools(
   browserFn: BrowserFn = defaultBrowserFn,
+  log: Logger = createLogger(),
 ): AnyTool[] {
   const requestHumanInput = createRequestHumanInputTool(
     defaultReadLine,
-    (s) => process.stderr.write(s),
+    log,
     () => runBrowserEval("window.location.href", browserFn),
   );
   return [

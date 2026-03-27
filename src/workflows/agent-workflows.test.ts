@@ -930,6 +930,47 @@ describe("agent workflows", () => {
     expect(lastPrompt).toContain("0/1");
   });
 
+  it("appends credentialsSummary to the system prompt when provided to runInteractiveMode", async () => {
+    const { runInteractiveMode, mocks } = await setupWorkflowModule({});
+
+    await runInteractiveMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [],
+      false,
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+      [],
+      [],
+      "## Available credential fields\n- email — Login email",
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as { systemPromptHistory: string[] };
+    const firstPrompt = agent.systemPromptHistory[0];
+    expect(firstPrompt).toContain("Available credential fields");
+    expect(firstPrompt).toContain("email");
+  });
+
+  it("appends credentialsSummary to the system prompt when provided to runReplayMode", async () => {
+    const { runReplayMode, mocks } = await setupWorkflowModule({
+      replayStuckAtIndex: 0,
+    });
+
+    await runReplayMode(
+      "https://example.com/schema.json",
+      "https://example.com",
+      [{ eventName: "purchase", schemaUrl: "https://example.com/purchase.json" }],
+      [{ name: "browser_click", execute: vi.fn() }] as never,
+      [],
+      "## Available credential fields\n- email — Login email",
+    );
+
+    const agent = mocks.createAgent.mock.results[0]?.value as { systemPromptHistory: string[] };
+    const firstPrompt = agent.systemPromptHistory[0];
+    expect(firstPrompt).toContain("Available credential fields");
+  });
+
   it("step executor returns empty string when tool result content has no text", async () => {
     const mockExecute = vi
       .fn()

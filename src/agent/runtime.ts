@@ -6,12 +6,16 @@ import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, getEnvApiKey } from "@mariozechner/pi-ai";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 import chalk from "chalk";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 import {
   allTools,
   createAllTools,
   createDataLayerInterceptor,
+  createFillCredentialTool,
   createRequestHumanInputTool,
 } from "../browser/tools.js";
+import type { CredentialStore } from "../credentials.js";
 import type { BrowserFn } from "../browser/runner.js";
 import { createSessionBrowserFn } from "../browser/runner.js";
 import { createSystemPrompt } from "./prompts.js";
@@ -150,18 +154,22 @@ export function buildAgentTools(
   accumulatedEvents: unknown[],
   headless: boolean,
   browserFn?: BrowserFn,
+  credentialStore?: CredentialStore,
+  log: Logger = createLogger(),
 ): { tools: typeof allTools; browserFn: BrowserFn; sessionId: string } {
   const session = createSessionBrowserFn();
   const effectiveBrowserFn = browserFn ?? session.browserFn;
-  const baseTools = createAllTools(effectiveBrowserFn);
+  const baseTools = createAllTools(effectiveBrowserFn, log);
   const intercept = createDataLayerInterceptor(
     accumulatedEvents,
     effectiveBrowserFn,
+    undefined,
+    log,
   );
   const headlessHumanInputTool = headless
     ? createRequestHumanInputTool(
         () => Promise.resolve(""),
-        () => {},
+        log,
       )
     : null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,6 +181,9 @@ export function buildAgentTools(
       if (POLLED_TOOL_NAMES.has(t.name)) return intercept(t);
       return t;
     }) as typeof allTools;
+  if (credentialStore) {
+    tools.push(createFillCredentialTool(credentialStore, effectiveBrowserFn) as typeof allTools[number]);
+  }
   return { tools, browserFn: effectiveBrowserFn, sessionId: session.sessionId };
 }
 

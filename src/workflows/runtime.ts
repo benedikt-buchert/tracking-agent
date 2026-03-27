@@ -1,4 +1,6 @@
 import chalk from "chalk";
+import { createLogger } from "../cli/logger.js";
+import type { Logger } from "../cli/logger.js";
 import { discoverEventSchemas } from "../schema.js";
 import type { EventSchema } from "../schema.js";
 import {
@@ -25,6 +27,7 @@ export async function loadRunState(
   schemaUrl: string,
   resume: boolean,
   schemasDir?: string,
+  log: Logger = createLogger(),
 ): Promise<{
   eventSchemas: EventSchema[];
   savedMessages: unknown[];
@@ -37,11 +40,9 @@ export async function loadRunState(
     : defaultLoadSchema;
 
   if (resume) {
-    process.stderr.write(
-      chalk.dim(`  Loading session from ${SESSION_FILE}...\n`),
-    );
+    log.info(chalk.dim(`  Loading session from ${SESSION_FILE}...\n`));
     const session = await loadSession(SESSION_FILE);
-    process.stderr.write(
+    log.info(
       chalk.dim(
         `  Restored ${session.eventSchemas.length} schema(s), ${session.messages.length} messages\n\n`,
       ),
@@ -55,17 +56,13 @@ export async function loadRunState(
     };
   }
 
-  process.stderr.write(
-    chalk.dim(`  Discovering schemas from ${schemaUrl}...\n`),
-  );
+  log.info(chalk.dim(`  Discovering schemas from ${schemaUrl}...\n`));
   const eventSchemas = await discoverEventSchemas(
     schemaUrl,
     "web-datalayer-js",
     loadSchemaFn,
   );
-  process.stderr.write(
-    chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`),
-  );
+  log.info(chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`));
   return { eventSchemas, savedMessages: [], foundEventNames: [], skippedEvents: [], loadSchemaFn };
 }
 
@@ -73,32 +70,32 @@ export async function openBrowser(
   targetUrl: string,
   headless: boolean,
   browser: BrowserFn = defaultBrowserFn,
+  log: Logger = createLogger(),
 ): Promise<void> {
   if (headless) {
     delete process.env["AGENT_BROWSER_HEADED"];
-    process.stderr.write(chalk.dim(`  Starting headless browser...\n`));
+    log.info(chalk.dim(`  Starting headless browser...\n`));
   } else {
     await startHeadedBrowser(browser);
-    process.stderr.write(chalk.dim(`  Starting headed browser...\n`));
+    log.info(chalk.dim(`  Starting headed browser...\n`));
   }
-  process.stderr.write(chalk.dim(`  Opening ${targetUrl}...\n\n`));
+  log.info(chalk.dim(`  Opening ${targetUrl}...\n\n`));
   await navigateTo(targetUrl, browser);
 }
 
 export async function captureFinalEvents(
   accumulatedEvents: unknown[],
   browser: BrowserFn = defaultBrowserFn,
+  log: Logger = createLogger(),
 ): Promise<unknown[]> {
-  process.stderr.write(chalk.dim(`\n  Capturing dataLayer events...\n`));
+  log.info(chalk.dim(`\n  Capturing dataLayer events...\n`));
   const preNavEvents = await drainInterceptor(browser);
   accumulatedEvents.push(...preNavEvents);
   const currentUrl = await getCurrentUrl(browser).catch(() => "");
   await waitForNavigation(currentUrl, browser);
   const postNavEvents = await drainInterceptor(browser);
   accumulatedEvents.push(...postNavEvents);
-  process.stderr.write(
-    chalk.dim(`  Captured ${accumulatedEvents.length} event(s)\n\n`),
-  );
+  log.info(chalk.dim(`  Captured ${accumulatedEvents.length} event(s)\n\n`));
   return accumulatedEvents;
 }
 

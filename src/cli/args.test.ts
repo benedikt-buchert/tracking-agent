@@ -153,6 +153,46 @@ describe("parseArgs", () => {
     ]);
     expect(result.schemasDir).toBeUndefined();
   });
+
+  it("parses --credentials into credentials", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--credentials",
+      "./creds.json",
+    ]);
+    expect(result.credentials).toBe("./creds.json");
+  });
+
+  it("returns undefined for credentials when --credentials is absent", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+    ]);
+    expect(result.credentials).toBeUndefined();
+  });
+
+  it("parses --quiet flag", () => {
+    const result = parseArgs(["--schema", "s", "--url", "u", "--quiet"]);
+    expect(result.quiet).toBe(true);
+    expect(result.verbose).toBe(false);
+  });
+
+  it("parses --verbose flag", () => {
+    const result = parseArgs(["--schema", "s", "--url", "u", "--verbose"]);
+    expect(result.verbose).toBe(true);
+    expect(result.quiet).toBe(false);
+  });
+
+  it("defaults quiet and verbose to false", () => {
+    const result = parseArgs(["--schema", "s", "--url", "u"]);
+    expect(result.quiet).toBe(false);
+    expect(result.verbose).toBe(false);
+  });
 });
 
 describe("resolveArgs", () => {
@@ -174,6 +214,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: false,
       headless: false,
+      quiet: false,
+      verbose: false,
     });
   });
 
@@ -221,6 +263,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: false,
       headless: true,
+      quiet: false,
+      verbose: false,
     });
   });
 
@@ -234,6 +278,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: false,
       headless: false,
+      quiet: false,
+      verbose: false,
     });
   });
 
@@ -308,6 +354,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: true,
       headless: true,
+      quiet: false,
+      verbose: false,
     });
     expect(prompt).not.toHaveBeenCalled();
   });
@@ -328,6 +376,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: true,
       headless: false,
+      quiet: false,
+      verbose: false,
     });
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Target URL"));
@@ -354,6 +404,8 @@ describe("resolveArgs", () => {
       resume: false,
       replay: true,
       headless: false,
+      quiet: false,
+      verbose: false,
     });
     expect(prompt).not.toHaveBeenCalled();
   });
@@ -391,6 +443,8 @@ describe("resolveArgs", () => {
       resume: true,
       replay: false,
       headless: false,
+      quiet: false,
+      verbose: false,
     });
     expect(prompt).toHaveBeenCalledTimes(2);
   });

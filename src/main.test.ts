@@ -66,6 +66,14 @@ async function setupMainModule() {
     saveReportFolder,
     validateAll,
   }));
+  const loadCredentials = vi.fn().mockResolvedValue({
+    get: vi.fn(),
+    fieldSummary: () => [],
+  });
+  vi.doMock("./credentials.js", () => ({
+    loadCredentials,
+    formatCredentialsSummary: vi.fn().mockReturnValue(""),
+  }));
   vi.doMock("./browser/tools.js", () => ({ allTools: [] }));
 
   const module = await import("./main.js");
@@ -86,6 +94,7 @@ async function setupMainModule() {
       saveReportFolder,
       drainInterceptor,
       captureFinalEvents,
+      loadCredentials,
     },
   };
 }
@@ -142,11 +151,13 @@ describe("main composition", () => {
       "https://example.com/schema.json",
       false,
       undefined,
+      expect.objectContaining({ verbosity: expect.any(String) }),
     );
     expect(mocks.openBrowser).toHaveBeenCalledWith(
       "https://example.com",
       false,
       expect.any(Function),
+      expect.objectContaining({ verbosity: expect.any(String) }),
     );
     expect(mocks.runReplayMode).toHaveBeenCalledTimes(1);
     expect(mocks.runInteractiveMode).not.toHaveBeenCalled();
@@ -154,7 +165,11 @@ describe("main composition", () => {
     expect(mocks.generateReport).toHaveBeenCalledTimes(1);
     expect(stdout).toHaveBeenCalledWith("REPORT");
     expect(mocks.closeRunBrowser).toHaveBeenCalledTimes(1);
-    expect(mocks.captureFinalEvents).toHaveBeenCalledWith([], expect.any(Function));
+    expect(mocks.captureFinalEvents).toHaveBeenCalledWith(
+      [],
+      expect.any(Function),
+      expect.objectContaining({ verbosity: expect.any(String) }),
+    );
     expect(mocks.saveReportFolder).toHaveBeenCalledWith(
       "tracking-reports",
       [{ event: "purchase" }],
@@ -168,7 +183,7 @@ describe("main composition", () => {
     expect(stderrText).toContain("Tracking Agent");
     expect(stderrText).toContain("Schema:");
     expect(stderrText).toContain("Target:");
-    expect(stderrText).toContain("Validating events");
+    // "Validating events" is verbose-only; not shown in normal mode
   });
 
   it("delegates non-replay runs to the interactive workflow", async () => {
@@ -266,6 +281,48 @@ describe("main composition", () => {
     expect(stderr.mock.calls.join("")).not.toContain("Report saved");
   });
 
+  it("suppresses banner and progress output in quiet mode", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+      quiet: true,
+      verbose: false,
+    });
+
+    await main();
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).not.toContain("Tracking Agent");
+    expect(stderrText).not.toContain("Validating events");
+  });
+
+  it("shows verbose-only messages in verbose mode", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+      quiet: false,
+      verbose: true,
+    });
+
+    await main();
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("Tracking Agent");
+    expect(stderrText).toContain("Validating events");
+  });
+
   it("does not show report saved when saveReportFolder rejects", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
@@ -280,6 +337,53 @@ describe("main composition", () => {
     await main();
 
     expect(stderr.mock.calls.join("")).not.toContain("Report saved");
+  });
+
+  it("loads credentials and passes store to buildAgentTools when --credentials is set", async () => {
+    const { main, mocks } = await setupMainModule();
+    const mockStore = { get: vi.fn(), fieldSummary: () => [] };
+    mocks.loadCredentials.mockResolvedValue(mockStore);
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+      credentials: "./creds.json",
+    });
+
+    await main();
+
+    expect(mocks.loadCredentials).toHaveBeenCalledWith("./creds.json");
+    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
+      expect.any(Array),
+      false,
+      undefined,
+      mockStore,
+      expect.objectContaining({ verbosity: expect.any(String) }),
+    );
+  });
+
+  it("does not load credentials when --credentials is not set", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+
+    await main();
+
+    expect(mocks.loadCredentials).not.toHaveBeenCalled();
+    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
+      expect.any(Array),
+      false,
+      undefined,
+      undefined,
+      expect.objectContaining({ verbosity: expect.any(String) }),
+    );
   });
 
   it("pushes landing events into the shared accumulator after building tools", async () => {

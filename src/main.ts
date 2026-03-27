@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import { resolveArgs } from "./cli/args.js";
 import { printHelp } from "./cli/help.js";
+import { createLogger } from "./cli/logger.js";
+import type { Verbosity } from "./cli/logger.js";
 import {
   drainInterceptor,
   generateReport,
@@ -8,6 +10,7 @@ import {
   validateAll,
 } from "./browser/runner.js";
 import { buildAgentTools } from "./agent/runtime.js";
+import { loadCredentials, formatCredentialsSummary } from "./credentials.js";
 import {
   captureFinalEvents,
   closeRunBrowser,
@@ -27,10 +30,13 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const { schemaUrl, targetUrl, resume, replay, headless, schemasDir } = args;
+  const { schemaUrl, targetUrl, resume, replay, headless, schemasDir, credentials, quiet, verbose } = args;
+
+  const verbosity: Verbosity = quiet ? "quiet" : verbose ? "verbose" : "normal";
+  const log = createLogger(verbosity);
 
   const mode = replay ? "replay" : resume ? "resume" : "fresh";
-  process.stderr.write(
+  log.info(
     chalk.bold("\n  Tracking Agent\n") +
       chalk.dim(`  Schema: ${schemaUrl}\n  Target: ${targetUrl}\n`) +
       (mode !== "fresh" ? chalk.dim(`  Mode: ${mode}\n`) : "") +
@@ -42,16 +48,23 @@ export async function main(): Promise<void> {
     schemaUrl,
     resume,
     schemasDir,
+    log,
   );
+  const credentialStore = credentials
+    ? await loadCredentials(credentials)
+    : undefined;
+  const credentialsSummary = credentialStore
+    ? formatCredentialsSummary(credentialStore.fieldSummary())
+    : "";
   const accumulatedEvents: unknown[] = [];
-  const { tools: agentTools, browserFn } = buildAgentTools(accumulatedEvents, headless);
+  const { tools: agentTools, browserFn } = buildAgentTools(accumulatedEvents, headless, undefined, credentialStore, log);
 
-  await openBrowser(targetUrl, headless, browserFn);
-  const landingEvents = await drainInterceptor(browserFn);
+  await openBrowser(targetUrl, headless, browserFn, log);
+  const landingEvents = await drainInterceptor(browserFn, log);
   accumulatedEvents.push(...landingEvents);
 
   if (replay) {
-    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools, accumulatedEvents);
+    await runReplayMode(schemaUrl, targetUrl, eventSchemas, agentTools, accumulatedEvents, credentialsSummary, log);
   } else {
     await runInteractiveMode(
       schemaUrl,
@@ -63,12 +76,14 @@ export async function main(): Promise<void> {
       accumulatedEvents,
       foundEventNames,
       skippedEvents,
+      credentialsSummary,
+      log,
     );
   }
 
-  const events = await captureFinalEvents(accumulatedEvents, browserFn);
+  const events = await captureFinalEvents(accumulatedEvents, browserFn, log);
 
-  process.stderr.write(chalk.dim(`  Validating events...\n`));
+  log.verbose(chalk.dim(`  Validating events...\n`));
   const results = await validateAll(events, eventSchemas, schemaUrl, loadSchemaFn);
 
   const expectedNames = eventSchemas.map((s) => s.eventName);
@@ -83,7 +98,7 @@ export async function main(): Promise<void> {
     report,
   ).catch(() => null);
   if (reportDir) {
-    process.stderr.write(chalk.dim(`  Report saved → ${reportDir}\n\n`));
+    log.info(chalk.dim(`  Report saved → ${reportDir}\n\n`));
   }
 
   await closeRunBrowser(browserFn);

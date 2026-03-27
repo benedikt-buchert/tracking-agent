@@ -56,10 +56,73 @@ tracking-agent --schema <url> --url <url> [options]
 | `--schemas-dir` | Local directory of schema files — used instead of remote fetches when available |
 | `--resume` | Resume a previous session from `.tracking-agent-session.json` |
 | `--replay` | Replay recorded steps from `.tracking-agent-playbook.json` (LLM fallback on failure) |
+| `--credentials` | Path to a JSON credentials file for sensitive form fields (see [Credentials](#credentials)) |
 | `--headless` | Run the browser in the background (no visible window) |
+| `--quiet` | Suppress all progress output — only errors and the final report are shown |
+| `--verbose` | Show detailed step-by-step progress |
 | `--help` | Show the help message |
 
 Validation runs locally using [AJV](https://ajv.js.org/). No external validator service is required. Schemas are fetched directly from the `--schema` URL (HTTP or local file) and validated in-process. Cross-referenced `$ref` schemas are resolved the same way.
+
+## Credentials
+
+Some checkout flows require sensitive payment or login details. Pass these via a JSON credentials file so the agent can fill them without the values appearing in prompts, logs, or conversation history.
+
+```bash
+tracking-agent \
+  --schema https://example.com/schema.json \
+  --url    https://example.com \
+  --credentials ./creds.json
+```
+
+### File format
+
+```json
+{
+  "fields": {
+    "card_number": {
+      "description": "Payment card number",
+      "value": "4242424242424242"
+    },
+    "card_cvc": {
+      "description": "Card security code",
+      "value": "123"
+    }
+  }
+}
+```
+
+Each entry under `"fields"` is a **credential field**:
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `description` | string | yes | Human-readable label shown to the agent (no value is revealed) |
+| `value` | string | yes | The actual secret value filled into the form element |
+
+### What to put in credentials
+
+Only put **sensitive fields** here — things that should never appear in logs:
+
+- Payment card numbers and CVCs
+- Passwords and PINs
+- API keys or tokens used as form inputs
+
+Non-sensitive form data (email addresses, postal codes, names) should be left as regular `browser_fill` or `browser_find` steps in the playbook.
+
+### Security
+
+- Credential values are loaded once at startup and held in memory.
+- The `fill_credential` agent tool receives only a `field_name` and CSS selector — the value is looked up internally and passed directly to the browser fill command.
+- Values never appear in system prompts, tool descriptions, agent messages, or replay files.
+- The `fieldSummary()` API — used in the system prompt — lists field names and descriptions only.
+
+## Output modes
+
+| Flag | Behaviour |
+|------|-----------|
+| *(default)* | Shows the startup banner and key milestones |
+| `--quiet` | Suppresses all progress output; only errors and the final JSON report are written |
+| `--verbose` | Shows detailed step-by-step progress including intermediate validation messages |
 
 ## Environment variables
 
