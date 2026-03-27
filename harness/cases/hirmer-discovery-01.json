@@ -1,0 +1,42 @@
+{
+  "$schema": "../schemas/signal-backed-case.schema.json",
+  "case_id": "hirmer-discovery-01",
+  "site_id": "hirmer",
+  "family_id": "checkout-discovery",
+  "kind": "live",
+  "entry_url": "https://www.hirmer.de/",
+  "journey_hint": "Explore the site to find and observe tracking events. Dismiss any consent modal, browse to a product, add it to cart, and attempt to reach checkout. Focus on extracting dataLayer events at each step.",
+  "tags": ["live", "checkout", "datalayer", "fashion"],
+  "difficulty": "medium",
+  "allowed_actions": ["navigate", "click", "fill", "dismiss-consent"],
+  "expected_signals": {
+    "tracking_surfaces": ["dataLayer"],
+    "event_names_any_of": ["page_view", "view_item", "add_to_cart", "begin_checkout", "purchase"],
+    "event_name_prefixes_any_of": [],
+    "event_property_keys_any_of": ["event", "ecommerce"],
+    "min_events_total": 3,
+    "min_unique_event_names": 2,
+    "important_event_names_any_of": ["add_to_cart", "begin_checkout"]
+  },
+  "negative_signals": {
+    "forbidden_event_names": [],
+    "forbidden_domains": [],
+    "disallowed_url_patterns": []
+  },
+  "journey_expectations": {
+    "target_url_patterns_any_of": ["/warenkorb", "/checkout", "/cart"],
+    "min_navigation_progress_score": 2,
+    "must_reach_high_value_state": false
+  },
+  "budgets": {
+    "max_action_steps": 30,
+    "max_tool_calls": 120,
+    "max_no_progress_actions": 8
+  },
+  "grader": {
+    "type": "heuristic",
+    "strictness": "medium"
+  },
+  "human_baseline_id": null,
+  "notes": "Live discovery case for hirmer.de. No exact schema required. Expects standard GA4/GTM ecommerce events."
+}

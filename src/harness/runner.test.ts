@@ -41,9 +41,6 @@ function makeDeps(overrides: Partial<RunCaseDeps> = {}): RunCaseDeps {
       sessionId: "test-session",
     }),
     discoverEventSchemas: vi.fn().mockResolvedValue([]),
-    createAgent: vi.fn().mockReturnValue({
-      subscribe: vi.fn().mockReturnValue(() => {}),
-    }),
     writeResult: vi.fn().mockResolvedValue(undefined),
     getGitCommit: vi.fn().mockResolvedValue("abc123"),
     getAccumulatedEvents: () => accumulatedEvents,
@@ -113,35 +110,22 @@ describe("runCase", () => {
     expect(result.lane).toBe("discovery_live_target");
   });
 
-  it("counts action steps from subscribed tool events", async () => {
-    let toolSubscribeCallback: ((event: unknown) => void) | undefined;
-
-    const mockAgent = {
-      subscribe: vi.fn().mockImplementation((cb: (event: unknown) => void) => {
-        toolSubscribeCallback = cb;
-        return () => {};
-      }),
-    };
+  it("counts action steps via wrapped tool execute calls", async () => {
+    const navigateTool = { name: "browser_navigate", execute: vi.fn().mockResolvedValue("ok") };
+    const snapshotTool = { name: "browser_snapshot", execute: vi.fn().mockResolvedValue("ok") };
+    const clickTool = { name: "browser_click", execute: vi.fn().mockResolvedValue("ok") };
 
     const deps = makeDeps({
-      createAgent: vi.fn().mockReturnValue(mockAgent),
-      runInteractiveMode: vi.fn().mockImplementation(async () => {
-        // Simulate tool events during agent run
-        toolSubscribeCallback?.({
-          type: "tool_execution_start",
-          toolName: "browser_navigate",
-          args: { url: "http://localhost:4321/" },
-        });
-        toolSubscribeCallback?.({
-          type: "tool_execution_start",
-          toolName: "browser_snapshot",
-          args: {},
-        });
-        toolSubscribeCallback?.({
-          type: "tool_execution_start",
-          toolName: "browser_click",
-          args: {},
-        });
+      buildAgentTools: vi.fn().mockReturnValue({
+        tools: [navigateTool, snapshotTool, clickTool],
+        browserFn: vi.fn(),
+        sessionId: "s",
+      }),
+      runInteractiveMode: vi.fn().mockImplementation(async (_su, _tu, _es, _sm, _r, tools: unknown) => {
+        const ts = tools as typeof navigateTool[];
+        await ts.find(t => t.name === "browser_navigate")?.execute("s", {});
+        await ts.find(t => t.name === "browser_snapshot")?.execute("s", {});
+        await ts.find(t => t.name === "browser_click")?.execute("s", {});
       }),
     });
 
@@ -152,21 +136,20 @@ describe("runCase", () => {
     expect(result.metrics.action_steps_total).toBe(2);
   });
 
-  it("counts total tool calls", async () => {
-    let cb: ((event: unknown) => void) | undefined;
-    const mockAgent = {
-      subscribe: vi.fn().mockImplementation((f: (event: unknown) => void) => {
-        cb = f;
-        return () => {};
-      }),
-    };
+  it("counts total tool calls via wrapped tools", async () => {
+    const navigateTool = { name: "browser_navigate", execute: vi.fn().mockResolvedValue("ok") };
+    const snapshotTool = { name: "browser_snapshot", execute: vi.fn().mockResolvedValue("ok") };
+    const waitTool = { name: "browser_wait", execute: vi.fn().mockResolvedValue("ok") };
 
     const deps = makeDeps({
-      createAgent: vi.fn().mockReturnValue(mockAgent),
-      runInteractiveMode: vi.fn().mockImplementation(async () => {
-        cb?.({ type: "tool_execution_start", toolName: "browser_navigate", args: {} });
-        cb?.({ type: "tool_execution_start", toolName: "browser_snapshot", args: {} });
-        cb?.({ type: "tool_execution_start", toolName: "browser_wait", args: {} });
+      buildAgentTools: vi.fn().mockReturnValue({
+        tools: [navigateTool, snapshotTool, waitTool],
+        browserFn: vi.fn(),
+        sessionId: "s",
+      }),
+      runInteractiveMode: vi.fn().mockImplementation(async (_su, _tu, _es, _sm, _r, tools: unknown) => {
+        const ts = tools as typeof navigateTool[];
+        for (const t of ts) await t.execute("s", {});
       }),
     });
 

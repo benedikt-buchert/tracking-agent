@@ -46,10 +46,12 @@ check indices, or call get_datalayer. Just focus on triggering interactions.
 - **Multi-step forms** — Fill all required fields before submitting. If a form has
   validation, use realistic values (e.g. valid email, proper postal code format).
   Take a snapshot after submission to check for error messages.
-- **Page transitions and redirects** — Some clicks navigate through transit or
-  redirect pages. After clicking a navigation link, use `browser_wait` with
-  `load: "networkidle"` followed by a `browser_wait` for a known selector on the
-  destination page before continuing.
+- **Page transitions and redirects** — After clicking any link or button that
+  should navigate, immediately verify the URL changed with `browser_eval` (`window.location.href`).
+  If the URL did not change, the click likely missed — take a fresh snapshot and
+  retry using `browser_find` with the visible link text (e.g. `text: "Jeans"`) rather
+  than reusing the old ref. Once navigation is confirmed, use `browser_wait` with
+  `load: "networkidle"` before continuing.
 - **Events that fire on page actions, not page loads** — Many events only fire when
   the user performs a specific action (button click, form submit). Take a snapshot
   to understand what actions are available, then perform them.
@@ -59,6 +61,12 @@ check indices, or call get_datalayer. Just focus on triggering interactions.
 - **Large pages** — On complex pages, use `browser_snapshot` with
   `interactive_only: true` to see only buttons, links, and inputs. This avoids
   overwhelming output and helps you focus on actionable elements.
+- **Stale element refs** — Element refs (e.g. `ref=e186`) are positional and become
+  invalid whenever the DOM changes — after navigation, after a modal opens or closes,
+  after lazy content loads. Never retry a failed click with the same ref. Instead:
+  take a fresh `browser_snapshot`, get the new ref, and try again. If the same ref
+  keeps failing, switch to `browser_find` with a semantic locator (`text:`, `label:`,
+  or `role:`) that targets the element by its visible content rather than its position.
 - **When stuck** — Take a `browser_snapshot` to see the current page state. Check
   the URL with `browser_eval` (e.g. `window.location.href`) to confirm you are on
   the expected page. If an element is missing, the page may still be loading —
@@ -77,8 +85,13 @@ check indices, or call get_datalayer. Just focus on triggering interactions.
 - If you reach a step that requires sensitive input (payment details, login credentials,
   CAPTCHA), call request_human_input describing exactly what the user needs to do.
   Wait for them to complete it, then continue.
+- **Prefer semantic locators over positional refs** — `browser_find` with `text:`,
+  `label:`, `role:`, or `testid:` targets elements by content and is stable across
+  DOM changes. Use positional refs (e.g. `ref=e5`) only for elements with no unique
+  text or label. When a ref-based click fails, immediately switch to a semantic
+  locator rather than retrying the ref.
 - **Think deterministically** — your actions will be recorded and replayed on future
-  runs. Prefer stable, repeatable actions: use `browser_find` with `testid` when
-  available, add explicit `browser_wait` steps before interacting with delayed
+  runs. Prefer stable, repeatable actions: use `browser_find` with `testid` or `text`
+  when available, add explicit `browser_wait` steps before interacting with delayed
   elements, and always wait for page loads after navigation clicks. If you dismiss
   a cookie banner or overlay, do it explicitly so it can be replayed.

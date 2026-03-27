@@ -10,6 +10,12 @@ const execFileAsync = promisify(execFile);
 
 // ─── Dependency injection interface ──────────────────────────────────────────
 
+type MinimalTool = {
+  name: string;
+  execute: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>;
+  [key: string]: unknown;
+};
+
 export interface RunCaseDeps {
   openBrowser: (url: string, headless: boolean) => Promise<void>;
   closeBrowser: () => Promise<void>;
@@ -30,9 +36,8 @@ export interface RunCaseDeps {
   buildAgentTools: (
     accumulatedEvents: unknown[],
     headless: boolean,
-  ) => { tools: unknown; browserFn: unknown; sessionId: string };
+  ) => { tools: MinimalTool[]; browserFn: unknown; sessionId: string };
   discoverEventSchemas: (schemaUrl: string, target: string) => Promise<unknown[]>;
-  createAgent: () => { subscribe: (cb: (event: unknown) => void) => () => void };
   writeResult: (path: string, result: RunResult) => Promise<void>;
   getGitCommit: () => Promise<string>;
   getAccumulatedEvents: () => unknown[];
@@ -106,23 +111,19 @@ export async function runCase(
   let actionStepsTotal = 0;
   let toolCallsTotal = 0;
 
-  // Set up agent for tool event tracking
-  const agent = deps.createAgent();
-  const unsubscribe = agent.subscribe((event: unknown) => {
-    const e = event as Record<string, unknown>;
-    if (e["type"] === "tool_execution_start") {
-      toolCallsTotal++;
-      const toolName = e["toolName"] as string;
-      const args = (e["args"] ?? {}) as Record<string, unknown>;
-      if (isActionStep(toolName, args)) {
-        actionStepsTotal++;
-      }
-    }
-  });
-
   const schemaUrl = options.schemaUrl ?? "https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json";
   const eventSchemas = await deps.discoverEventSchemas(schemaUrl, "web-datalayer-js");
   const { tools } = deps.buildAgentTools(accumulatedEvents, options.headless);
+
+  // Wrap each tool to count calls as they actually execute
+  const countingTools = tools.map((tool) => ({
+    ...tool,
+    execute: async (sessionId: string, args: Record<string, unknown>) => {
+      toolCallsTotal++;
+      if (isActionStep(tool.name, args)) actionStepsTotal++;
+      return tool.execute(sessionId, args);
+    },
+  }));
 
   await deps.openBrowser(testCase.entry_url, options.headless);
 
@@ -134,7 +135,7 @@ export async function runCase(
       eventSchemas,
       [],
       false,
-      tools,
+      countingTools,
       accumulatedEvents,
       [],
       [],
@@ -144,7 +145,6 @@ export async function runCase(
   } catch (err) {
     runError = err instanceof Error ? err : new Error(String(err));
   } finally {
-    unsubscribe();
     await deps.captureFinalEvents(accumulatedEvents);
     await deps.closeBrowser();
   }
@@ -220,7 +220,7 @@ export async function createProductionDeps(): Promise<RunCaseDeps> {
   const [
     { openBrowser, closeRunBrowser, captureFinalEvents },
     { runInteractiveMode },
-    { buildAgentTools, createAgent },
+    { buildAgentTools },
     { discoverEventSchemas },
   ] = await Promise.all([
     import("../workflows/runtime.js"),
@@ -249,10 +249,10 @@ export async function createProductionDeps(): Promise<RunCaseDeps> {
         credentialsSummary,
         log as Parameters<typeof runInteractiveMode>[10],
       ),
-    buildAgentTools: (evts, headless) => buildAgentTools(evts, headless),
+    buildAgentTools: (evts, headless) =>
+      buildAgentTools(evts, headless) as unknown as ReturnType<RunCaseDeps["buildAgentTools"]>,
     discoverEventSchemas: (schemaUrl, target) =>
       discoverEventSchemas(schemaUrl, target),
-    createAgent: () => createAgent(),
     writeResult: defaultWriteResult,
     getGitCommit: defaultGetGitCommit,
     getAccumulatedEvents: () => accumulatedEvents,
