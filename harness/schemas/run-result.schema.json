@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "run-result.schema.json",
+  "title": "RunResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "run_id",
+    "timestamp",
+    "git_commit",
+    "case_id",
+    "site_id",
+    "lane",
+    "outcome",
+    "metrics"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "run_id": { "type": "string" },
+    "timestamp": { "type": "string" },
+    "git_commit": { "type": "string" },
+    "case_id": { "type": "string" },
+    "site_id": { "type": "string" },
+    "family_id": { "type": ["string", "null"] },
+    "lane": {
+      "type": "string",
+      "enum": [
+        "discovery_known",
+        "discovery_promoted",
+        "discovery_live_target",
+        "discovery_live_holdout"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["passed", "failed", "error", "skipped"]
+        },
+        "tracking_surface_found": { "type": "boolean" },
+        "journey_completed": { "type": "boolean" },
+        "important_event_detected": { "type": "boolean" },
+        "human_intervention_needed": { "type": "boolean" },
+        "failure_class": { "type": ["string", "null"] },
+        "failure_summary": { "type": ["string", "null"] }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_steps_total",
+        "tool_calls_total",
+        "events_extracted_total",
+        "unique_event_names"
+      ],
+      "properties": {
+        "action_steps_total": { "type": "integer", "minimum": 0 },
+        "tool_calls_total": { "type": "integer", "minimum": 0 },
+        "navigation_count": { "type": "integer", "minimum": 0 },
+        "unique_pages_visited": { "type": "integer", "minimum": 0 },
+        "events_extracted_total": { "type": "integer", "minimum": 0 },
+        "unique_event_names": { "type": "integer", "minimum": 0 },
+        "important_events_found": { "type": "integer", "minimum": 0 },
+        "navigation_progress_score": { "type": "integer", "minimum": 0 },
+        "stuck_loops_detected": { "type": "integer", "minimum": 0 },
+        "repeated_action_count": { "type": "integer", "minimum": 0 },
+        "no_progress_action_streak_max": { "type": "integer", "minimum": 0 },
+        "token_input": { "type": "integer", "minimum": 0 },
+        "token_output": { "type": "integer", "minimum": 0 },
+        "estimated_cost_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "human_comparison": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "human_baseline_available": { "type": "boolean" },
+        "human_action_steps_total": { "type": "integer", "minimum": 0 },
+        "step_ratio_vs_human": { "type": "number" },
+        "extra_steps_vs_human": { "type": "integer" },
+        "milestone_recall_vs_human": { "type": "number" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "log_path": { "type": ["string", "null"] },
+        "report_path": { "type": ["string", "null"] },
+        "session_path": { "type": ["string", "null"] },
+        "playbook_path": { "type": ["string", "null"] },
+        "trace_path": { "type": ["string", "null"] },
+        "screenshots_dir": { "type": ["string", "null"] },
+        "dom_snapshot_dir": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

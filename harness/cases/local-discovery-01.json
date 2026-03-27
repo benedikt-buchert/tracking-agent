@@ -1,0 +1,47 @@
+{
+  "$schema": "../schemas/signal-backed-case.schema.json",
+  "case_id": "local-discovery-01",
+  "site_id": "local-demo",
+  "family_id": null,
+  "kind": "local",
+  "entry_url": "http://localhost:4321/",
+  "journey_hint": "Navigate the deterministic checkout fixture. Start from the landing page, proceed through checkout (fill shipping details), then through payment (fill card details) to reach the confirmation or profile page. Observe tracking events fired into the dataLayer at each step.",
+  "tags": ["local", "checkout", "datalayer", "deterministic"],
+  "difficulty": "easy",
+  "allowed_actions": ["navigate", "click", "fill", "dismiss-consent"],
+  "expected_signals": {
+    "tracking_surfaces": ["dataLayer"],
+    "event_names_any_of": [
+      "add_to_cart",
+      "address_submitted",
+      "purchase",
+      "user_update"
+    ],
+    "event_name_prefixes_any_of": [],
+    "event_property_keys_any_of": ["event", "ecommerce"],
+    "min_events_total": 2,
+    "min_unique_event_names": 2,
+    "important_event_names_any_of": ["purchase", "address_submitted"]
+  },
+  "negative_signals": {
+    "forbidden_event_names": [],
+    "forbidden_domains": [],
+    "disallowed_url_patterns": []
+  },
+  "journey_expectations": {
+    "target_url_patterns_any_of": ["/checkout", "/payment", "/profile"],
+    "min_navigation_progress_score": 2,
+    "must_reach_high_value_state": false
+  },
+  "budgets": {
+    "max_action_steps": 20,
+    "max_tool_calls": 80,
+    "max_no_progress_actions": 6
+  },
+  "grader": {
+    "type": "heuristic",
+    "strictness": "medium"
+  },
+  "human_baseline_id": null,
+  "notes": "Local deterministic fixture. The site fires add_to_cart, address_submitted, purchase, and user_update events. No consent modal."
+}

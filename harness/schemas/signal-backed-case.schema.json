@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "signal-backed-case.schema.json",
+  "title": "SignalBackedCase",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "case_id",
+    "site_id",
+    "kind",
+    "entry_url",
+    "journey_hint",
+    "expected_signals",
+    "budgets",
+    "grader"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "case_id": { "type": "string" },
+    "site_id": { "type": "string" },
+    "family_id": { "type": ["string", "null"] },
+    "kind": { "type": "string", "enum": ["local", "live", "promoted"] },
+    "entry_url": { "type": "string", "format": "uri" },
+    "journey_hint": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expected_signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tracking_surfaces"],
+      "properties": {
+        "tracking_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_names_any_of": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_name_prefixes_any_of": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_property_keys_any_of": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "min_events_total": { "type": "integer", "minimum": 0 },
+        "min_unique_event_names": { "type": "integer", "minimum": 0 },
+        "important_event_names_any_of": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "negative_signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forbidden_event_names": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbidden_domains": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "disallowed_url_patterns": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "journey_expectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_url_patterns_any_of": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "min_navigation_progress_score": { "type": "integer", "minimum": 0 },
+        "must_reach_high_value_state": { "type": "boolean" }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_action_steps"],
+      "properties": {
+        "max_action_steps": { "type": "integer", "minimum": 1 },
+        "max_tool_calls": { "type": "integer", "minimum": 1 },
+        "max_no_progress_actions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "grader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["heuristic", "strict"] },
+        "strictness": { "type": "string", "enum": ["low", "medium", "high"] }
+      }
+    },
+    "human_baseline_id": { "type": ["string", "null"] },
+    "notes": { "type": "string" }
+  }
+}

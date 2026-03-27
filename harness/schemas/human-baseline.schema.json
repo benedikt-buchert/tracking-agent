@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "human-baseline.schema.json",
+  "title": "HumanBaseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "human_baseline_id",
+    "case_id",
+    "source",
+    "action_steps_total"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "human_baseline_id": { "type": "string" },
+    "case_id": { "type": "string" },
+    "source": { "type": "string" },
+    "action_steps_total": { "type": "integer", "minimum": 0 },
+    "milestones": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "playbook_path": { "type": ["string", "null"] },
+    "notes": { "type": "string" }
+  }
+}
