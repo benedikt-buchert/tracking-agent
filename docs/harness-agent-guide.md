@@ -86,6 +86,24 @@ Use these evidence sources when diagnosing a failure:
 
 For live cases, remember that expectations are heuristic. Do not infer exact correctness where the case does not provide it.
 
+## Result Storage
+
+Do not commit raw timestamped files from `harness/results/`.
+
+Treat `harness/results/` as disposable run output:
+
+- use it for local diagnosis
+- compare it against the checked-in baseline snapshot
+- discard or regenerate it as needed
+
+Commit only deliberate benchmark snapshots, for example:
+
+- `harness/baselines/latest-scorecard.json`
+- optional human baselines
+- promoted repro cases
+
+When benchmark expectations change on purpose, update the checked-in baseline in the same change as the agent improvement.
+
 ## Improvement Loop
 
 Use this loop:

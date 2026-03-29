@@ -2,8 +2,6 @@ import { compileValidator } from "./compile.js";
 import type { ValidationResult } from "./compile.js";
 import type { LoadSchemaFn } from "./load.js";
 
-export type { ValidationResult };
-
 const validatorCache = new Map<string, (data: unknown) => ValidationResult>();
 
 export function clearValidatorCache(): void {

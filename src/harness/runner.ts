@@ -1,43 +1,24 @@
-import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import type { SignalBackedCase, HumanBaseline, RunResult, RunLane } from "./types.js";
-import { isActionStep } from "./step-counter.js";
+import type {
+  SignalBackedCase,
+  HumanBaseline,
+  RunResult,
+  RunLane,
+} from "./types.js";
 import { gradeRun } from "./grader.js";
 
-const execFileAsync = promisify(execFile);
-
-// ─── Dependency injection interface ──────────────────────────────────────────
-
-type MinimalTool = {
-  name: string;
-  execute: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>;
-  [key: string]: unknown;
-};
-
 export interface RunCaseDeps {
-  openBrowser: (url: string, headless: boolean) => Promise<void>;
-  closeBrowser: () => Promise<void>;
-  captureFinalEvents: (events: unknown[]) => Promise<unknown[]>;
-  runInteractiveMode: (
-    schemaUrl: string,
-    targetUrl: string,
-    eventSchemas: unknown[],
-    savedMessages: unknown[],
-    resume: boolean,
-    agentTools: unknown,
-    accumulatedEvents: unknown[],
-    foundEventNames: string[],
-    skippedEvents: { name: string; reason: string }[],
-    credentialsSummary: string,
-    log: unknown,
-  ) => Promise<void>;
-  buildAgentTools: (
-    accumulatedEvents: unknown[],
-    headless: boolean,
-  ) => { tools: MinimalTool[]; browserFn: unknown; sessionId: string };
-  discoverEventSchemas: (schemaUrl: string, target: string) => Promise<unknown[]>;
+  runStagehandCase: (
+    testCase: SignalBackedCase,
+    options: Pick<RunCaseOptions, "headless" | "schemaUrl">,
+  ) => Promise<{
+    accumulatedEvents: unknown[];
+    actionStepsTotal: number;
+    toolCallsTotal: number;
+    noProgressActionStreakMax?: number;
+    journeyCompleted?: boolean;
+    humanInterventionNeeded?: boolean;
+  }>;
   writeResult: (path: string, result: RunResult) => Promise<void>;
   getGitCommit: () => Promise<string>;
   getAccumulatedEvents: () => unknown[];
@@ -51,30 +32,14 @@ export interface RunCaseOptions {
   schemaUrl?: string;
 }
 
-// ─── Default implementations ─────────────────────────────────────────────────
-
-async function defaultGetGitCommit(): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"]);
-    return stdout.trim();
-  } catch {
-    return "unknown";
-  }
-}
-
-async function defaultWriteResult(path: string, result: RunResult): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, JSON.stringify(result, null, 2), "utf-8");
-}
-
-// ─── Run result path ─────────────────────────────────────────────────────────
-
-function buildResultPath(resultsDir: string, caseId: string, timestamp: string): string {
+function buildResultPath(
+  resultsDir: string,
+  caseId: string,
+  timestamp: string,
+): string {
   const safe = timestamp.replace(/[:.]/g, "-");
   return join(resultsDir, `${safe}-${caseId}.json`);
 }
-
-// ─── Helper: extract event metrics ───────────────────────────────────────────
 
 function extractEventMetrics(events: unknown[]): {
   events_extracted_total: number;
@@ -82,9 +47,9 @@ function extractEventMetrics(events: unknown[]): {
   observed_event_names: string[];
 } {
   const names: string[] = [];
-  for (const e of events) {
-    if (e && typeof e === "object") {
-      const name = (e as Record<string, unknown>)["event"];
+  for (const event of events) {
+    if (event && typeof event === "object") {
+      const name = (event as Record<string, unknown>)["event"];
       if (typeof name === "string") names.push(name);
     }
   }
@@ -95,79 +60,44 @@ function extractEventMetrics(events: unknown[]): {
     observed_event_names: unique,
   };
 }
-
-// ─── Runner ─────────────────────────────────────────────────────────────────
-
 export async function runCase(
   testCase: SignalBackedCase,
   deps: RunCaseDeps,
   options: RunCaseOptions,
 ): Promise<RunResult> {
+  const startedAt = Date.now();
   const timestamp = new Date().toISOString();
   const gitCommit = await deps.getGitCommit();
   const accumulatedEvents = deps.getAccumulatedEvents();
+  const schemaUrl =
+    options.schemaUrl ??
+    "https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json";
 
-  // Metrics counters
-  let actionStepsTotal = 0;
-  let toolCallsTotal = 0;
+  const stagehandResult = await deps.runStagehandCase(testCase, {
+    headless: options.headless,
+    schemaUrl,
+  });
+  accumulatedEvents.push(...stagehandResult.accumulatedEvents);
 
-  const schemaUrl = options.schemaUrl ?? "https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json";
-  const eventSchemas = await deps.discoverEventSchemas(schemaUrl, "web-datalayer-js");
-  const { tools } = deps.buildAgentTools(accumulatedEvents, options.headless);
-
-  // Wrap each tool to count calls as they actually execute
-  const countingTools = tools.map((tool) => ({
-    ...tool,
-    execute: async (sessionId: string, args: Record<string, unknown>) => {
-      toolCallsTotal++;
-      if (isActionStep(tool.name, args)) actionStepsTotal++;
-      return tool.execute(sessionId, args);
-    },
-  }));
-
-  await deps.openBrowser(testCase.entry_url, options.headless);
-
-  let runError: Error | undefined;
-  try {
-    await deps.runInteractiveMode(
-      schemaUrl,
-      testCase.entry_url,
-      eventSchemas,
-      [],
-      false,
-      countingTools,
-      accumulatedEvents,
-      [],
-      [],
-      "",
-      { info: () => {}, verbose: () => {}, warn: () => {}, error: () => {}, verbosity: "quiet" },
-    );
-  } catch (err) {
-    runError = err instanceof Error ? err : new Error(String(err));
-  } finally {
-    await deps.captureFinalEvents(accumulatedEvents);
-    await deps.closeBrowser();
-  }
-
-  if (runError) throw runError;
-
-  // Build metrics
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
   const { events_extracted_total, unique_event_names, observed_event_names } =
     extractEventMetrics(accumulatedEvents);
 
-  const gradeInput = {
+  const gradeResult = gradeRun(testCase, {
     events_extracted_total,
     unique_event_names,
     observed_event_names,
-    action_steps_total: actionStepsTotal,
-    no_progress_action_streak_max: 0, // not tracked yet
-  };
+    action_steps_total: stagehandResult.actionStepsTotal,
+    no_progress_action_streak_max:
+      stagehandResult.noProgressActionStreakMax ?? 0,
+  });
 
-  const gradeResult = gradeRun(testCase, gradeInput);
-  const importantAnyOf = testCase.expected_signals.important_event_names_any_of ?? [];
+  const importantAnyOf =
+    testCase.expected_signals.important_event_names_any_of ?? [];
   const observedSet = new Set(observed_event_names);
   const importantEventDetected =
-    importantAnyOf.length === 0 || importantAnyOf.some((n) => observedSet.has(n));
+    importantAnyOf.length === 0 ||
+    importantAnyOf.some((name) => observedSet.has(name));
 
   const result: RunResult = {
     $schema: "../schemas/run-result.schema.json",
@@ -181,17 +111,26 @@ export async function runCase(
     outcome: {
       status: gradeResult.status,
       tracking_surface_found: events_extracted_total > 0,
-      journey_completed: false,
+      journey_completed: stagehandResult.journeyCompleted ?? false,
       important_event_detected: importantEventDetected,
-      human_intervention_needed: false,
+      human_intervention_needed:
+        stagehandResult.humanInterventionNeeded ?? false,
       failure_class: gradeResult.reasons[0] ? "grader_failure" : null,
-      failure_summary: gradeResult.reasons.length > 0 ? gradeResult.reasons.join("; ") : null,
+      failure_summary:
+        gradeResult.reasons.length > 0 ? gradeResult.reasons.join("; ") : null,
     },
     metrics: {
-      action_steps_total: actionStepsTotal,
-      tool_calls_total: toolCallsTotal,
+      action_steps_total: stagehandResult.actionStepsTotal,
+      tool_calls_total: stagehandResult.toolCallsTotal,
+      elapsed_ms: elapsedMs,
+      ms_per_action_step:
+        stagehandResult.actionStepsTotal > 0
+          ? elapsedMs / stagehandResult.actionStepsTotal
+          : undefined,
       events_extracted_total,
       unique_event_names,
+      observed_event_names,
+      no_progress_action_streak_max: stagehandResult.noProgressActionStreakMax,
     },
     human_comparison: options.humanBaseline
       ? {
@@ -199,62 +138,21 @@ export async function runCase(
           human_action_steps_total: options.humanBaseline.action_steps_total,
           step_ratio_vs_human:
             options.humanBaseline.action_steps_total > 0
-              ? actionStepsTotal / options.humanBaseline.action_steps_total
+              ? stagehandResult.actionStepsTotal /
+                options.humanBaseline.action_steps_total
               : 0,
           extra_steps_vs_human:
-            actionStepsTotal - options.humanBaseline.action_steps_total,
+            stagehandResult.actionStepsTotal -
+            options.humanBaseline.action_steps_total,
         }
       : null,
   };
 
-  const resultPath = buildResultPath(options.resultsDir, testCase.case_id, timestamp);
+  const resultPath = buildResultPath(
+    options.resultsDir,
+    testCase.case_id,
+    timestamp,
+  );
   await deps.writeResult(resultPath, result);
-
   return result;
-}
-
-// ─── Default production deps ─────────────────────────────────────────────────
-
-export async function createProductionDeps(): Promise<RunCaseDeps> {
-  // Eagerly import heavy modules once so all deps are synchronously available
-  const [
-    { openBrowser, closeRunBrowser, captureFinalEvents },
-    { runInteractiveMode },
-    { buildAgentTools },
-    { discoverEventSchemas },
-  ] = await Promise.all([
-    import("../workflows/runtime.js"),
-    import("../workflows/agent-workflows.js"),
-    import("../agent/runtime.js"),
-    import("../schema.js"),
-  ]);
-
-  const accumulatedEvents: unknown[] = [];
-
-  return {
-    openBrowser: (url, headless) => openBrowser(url, headless),
-    closeBrowser: () => closeRunBrowser(),
-    captureFinalEvents: (events) => captureFinalEvents(events),
-    runInteractiveMode: (
-      schemaUrl, targetUrl, eventSchemas, savedMessages, resume,
-      agentTools, accEvts, foundEventNames, skippedEvents,
-      credentialsSummary, log,
-    ) =>
-      runInteractiveMode(
-        schemaUrl, targetUrl,
-        eventSchemas as Parameters<typeof runInteractiveMode>[2],
-        savedMessages, resume,
-        agentTools as Parameters<typeof runInteractiveMode>[5],
-        accEvts, foundEventNames, skippedEvents,
-        credentialsSummary,
-        log as Parameters<typeof runInteractiveMode>[10],
-      ),
-    buildAgentTools: (evts, headless) =>
-      buildAgentTools(evts, headless) as unknown as ReturnType<RunCaseDeps["buildAgentTools"]>,
-    discoverEventSchemas: (schemaUrl, target) =>
-      discoverEventSchemas(schemaUrl, target),
-    writeResult: defaultWriteResult,
-    getGitCommit: defaultGetGitCommit,
-    getAccumulatedEvents: () => accumulatedEvents,
-  };
 }

@@ -1,10 +1,8 @@
-import { readdir, readFile } from "fs/promises";
-import { join } from "path";
 import type { RunResult } from "./types.js";
 
 // ─── Scorecard types ─────────────────────────────────────────────────────────
 
-export interface ScorecardRow {
+interface ScorecardRow {
   case_id: string;
   site_id: string;
   lane: string;
@@ -16,7 +14,7 @@ export interface ScorecardRow {
   failure_summary: string | null;
 }
 
-export interface Scorecard {
+interface Scorecard {
   git_commit: string;
   total: number;
   passed: number;
@@ -76,9 +74,7 @@ export function formatScorecard(sc: Scorecard): string {
 
   const rowLines = sc.rows.map((row) => {
     const statusMark = row.status === "passed" ? "PASS" : "FAIL";
-    const failure = row.failure_summary
-      ? row.failure_summary.slice(0, 50)
-      : "";
+    const failure = row.failure_summary ? row.failure_summary.slice(0, 50) : "";
     return [
       pad(row.case_id, 30),
       pad(statusMark, 8),
@@ -96,25 +92,3 @@ export function formatScorecard(sc: Scorecard): string {
 }
 
 // ─── File loader ─────────────────────────────────────────────────────────────
-
-export async function loadResultsFromDir(dir: string): Promise<RunResult[]> {
-  let files: string[];
-  try {
-    files = (await readdir(dir)).filter((f) => f.endsWith(".json"));
-  } catch {
-    return [];
-  }
-
-  const results: RunResult[] = [];
-  for (const file of files) {
-    try {
-      const raw = await readFile(join(dir, file), "utf-8");
-      const parsed = JSON.parse(raw) as RunResult;
-      results.push(parsed);
-    } catch {
-      // skip malformed files
-    }
-  }
-
-  return results.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-}

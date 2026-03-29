@@ -12,69 +12,58 @@ async function setupMainModule() {
         schemaUrl: "https://example.com/purchase.schema.json",
       },
     ],
-    savedMessages: [],
     loadSchemaFn: vi.fn(),
   });
-  const openBrowser = vi.fn().mockResolvedValue(undefined);
-  const mockBrowserFn = vi.fn();
-  const buildAgentTools = vi.fn().mockReturnValue({ tools: [], browserFn: mockBrowserFn, sessionId: "test-session" });
-  const runReplayMode = vi.fn().mockResolvedValue(undefined);
-  const runInteractiveMode = vi.fn().mockResolvedValue(undefined);
+  const saveRunSession = vi.fn().mockResolvedValue(undefined);
+  const runStagehandCase = vi.fn().mockResolvedValue({
+    accumulatedEvents: [{ event: "purchase" }],
+    actionStepsTotal: 4,
+    toolCallsTotal: 6,
+    journeyCompleted: true,
+    humanInterventionNeeded: false,
+  });
   const validateAll = vi.fn().mockResolvedValue([{ valid: true, errors: [] }]);
   const generateReport = vi.fn().mockReturnValue("REPORT");
-  const closeRunBrowser = vi.fn().mockResolvedValue(undefined);
   const saveReportFolder = vi.fn().mockResolvedValue(null);
-  const drainInterceptor = vi.fn().mockResolvedValue([]);
-  const captureFinalEvents = vi.fn().mockResolvedValue([{ event: "purchase" }]);
+  const writeFile = vi.fn().mockResolvedValue(undefined);
 
   vi.doMock("./cli/args.js", () => ({ resolveArgs, parseArgs: vi.fn() }));
   vi.doMock("./cli/help.js", () => ({
     printHelp,
     buildHelpText: vi.fn().mockReturnValue("HELP"),
   }));
-  vi.doMock("./agent/runtime.js", () => ({
-    buildAgentTools,
-    checkApiKey: vi.fn(),
-    collectAgentText: vi.fn(),
-    ConfigurationError: class ConfigurationError extends Error {},
-    createAgent: vi.fn(),
-    resolveModel: vi.fn(),
-  }));
-  vi.doMock("./agent/prompts.js", () => ({
-    buildInitialPrompt: vi.fn(),
-    createSystemPrompt: vi.fn(),
-    readPrompt: vi.fn(),
-  }));
-  vi.doMock("./agent/console-handler.js", () => ({
-    createConsoleHandler: vi.fn(),
-  }));
-  vi.doMock("./workflows/runtime.js", () => ({
-    captureFinalEvents,
-    closeRunBrowser,
+  vi.doMock("./run-state.js", () => ({
     loadRunState,
-    openBrowser,
-    PLAYBOOK_FILE: ".tracking-agent-playbook.json",
+    saveRunSession,
     SESSION_FILE: ".tracking-agent-session.json",
+    PLAYBOOK_FILE: ".tracking-agent-playbook.json",
   }));
-  vi.doMock("./workflows/agent-workflows.js", () => ({
-    runReplayMode,
-    runInteractiveMode,
+  vi.doMock("./harness/stagehand-runner.js", () => ({
+    runStagehandCase,
   }));
-  vi.doMock("./browser/runner.js", () => ({
-    drainInterceptor,
+  vi.doMock("./browser/report.js", () => ({
+    validateAll,
     generateReport,
     saveReportFolder,
-    validateAll,
   }));
+  vi.doMock("node:fs/promises", () => ({ writeFile }));
   const loadCredentials = vi.fn().mockResolvedValue({
     get: vi.fn(),
-    fieldSummary: () => [],
+    fieldSummary: () => [{ field: "email", available: true }],
+    stagehandVariables: () => ({
+      email: {
+        value: "a@b.com",
+        description: "Login email",
+      },
+    }),
   });
+  const formatCredentialsSummary = vi
+    .fn()
+    .mockReturnValue("Available credential fields: email");
   vi.doMock("./credentials.js", () => ({
     loadCredentials,
-    formatCredentialsSummary: vi.fn().mockReturnValue(""),
+    formatCredentialsSummary,
   }));
-  vi.doMock("./browser/tools.js", () => ({ allTools: [] }));
 
   const module = await import("./main.js");
 
@@ -84,17 +73,14 @@ async function setupMainModule() {
       resolveArgs,
       printHelp,
       loadRunState,
-      openBrowser,
-      buildAgentTools,
-      runReplayMode,
-      runInteractiveMode,
+      saveRunSession,
+      runStagehandCase,
       validateAll,
       generateReport,
-      closeRunBrowser,
       saveReportFolder,
-      drainInterceptor,
-      captureFinalEvents,
+      writeFile,
       loadCredentials,
+      formatCredentialsSummary,
     },
   };
 }
@@ -122,8 +108,7 @@ describe("main composition", () => {
     await main();
 
     expect(mocks.printHelp).toHaveBeenCalledTimes(1);
-    expect(mocks.runReplayMode).not.toHaveBeenCalled();
-    expect(mocks.runInteractiveMode).not.toHaveBeenCalled();
+    expect(mocks.runStagehandCase).not.toHaveBeenCalled();
   });
 
   it("passes process.argv.slice(2) to resolveArgs", async () => {
@@ -135,13 +120,13 @@ describe("main composition", () => {
     expect(mocks.resolveArgs).toHaveBeenCalledWith(process.argv.slice(2));
   });
 
-  it("delegates replay runs to the replay workflow and finalizes the report", async () => {
+  it("runs the Stagehand journey and finalizes the report", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
       resume: false,
-      replay: true,
+      replay: false,
       headless: false,
     });
 
@@ -153,64 +138,30 @@ describe("main composition", () => {
       undefined,
       expect.objectContaining({ verbosity: expect.any(String) }),
     );
-    expect(mocks.openBrowser).toHaveBeenCalledWith(
-      "https://example.com",
-      false,
-      expect.any(Function),
-      expect.objectContaining({ verbosity: expect.any(String) }),
+    expect(mocks.runStagehandCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entry_url: "https://example.com",
+        site_id: "example.com",
+        expected_signals: expect.objectContaining({
+          important_event_names_any_of: ["purchase"],
+        }),
+      }),
+      expect.objectContaining({
+        headless: false,
+        onInterventionNeeded: expect.any(Function),
+      }),
     );
-    expect(mocks.runReplayMode).toHaveBeenCalledTimes(1);
-    expect(mocks.runInteractiveMode).not.toHaveBeenCalled();
     expect(mocks.validateAll).toHaveBeenCalledTimes(1);
     expect(mocks.generateReport).toHaveBeenCalledTimes(1);
     expect(stdout).toHaveBeenCalledWith("REPORT");
-    expect(mocks.closeRunBrowser).toHaveBeenCalledTimes(1);
-    expect(mocks.captureFinalEvents).toHaveBeenCalledWith(
-      [],
-      expect.any(Function),
-      expect.objectContaining({ verbosity: expect.any(String) }),
+    expect(mocks.saveRunSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaUrl: "https://example.com/schema.json",
+        targetUrl: "https://example.com",
+        eventSchemas: expect.any(Array),
+        foundEventNames: ["purchase"],
+      }),
     );
-    expect(mocks.saveReportFolder).toHaveBeenCalledWith(
-      "tracking-reports",
-      [{ event: "purchase" }],
-      [{ valid: true, errors: [] }],
-      ["purchase"],
-      "REPORT",
-    );
-    const stderrText = stderr.mock.calls
-      .map(([text]: [unknown]) => String(text))
-      .join("");
-    expect(stderrText).toContain("Tracking Agent");
-    expect(stderrText).toContain("Schema:");
-    expect(stderrText).toContain("Target:");
-    // "Validating events" is verbose-only; not shown in normal mode
-  });
-
-  it("delegates non-replay runs to the interactive workflow", async () => {
-    const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: true,
-      replay: false,
-      headless: true,
-    });
-    mocks.loadRunState.mockResolvedValue({
-      eventSchemas: [
-        {
-          eventName: "purchase",
-          schemaUrl: "https://example.com/purchase.schema.json",
-        },
-      ],
-      savedMessages: [{ role: "assistant", content: [] }],
-    });
-
-    await main();
-
-    expect(mocks.runInteractiveMode).toHaveBeenCalledTimes(1);
-    expect(mocks.runReplayMode).not.toHaveBeenCalled();
-    expect(stderr.mock.calls.join("")).toContain("Mode: resume");
-    expect(stderr.mock.calls.join("")).toContain("Browser: headless");
   });
 
   it("prints replay mode in the startup banner", async () => {
@@ -226,7 +177,25 @@ describe("main composition", () => {
     await main();
 
     expect(stderr.mock.calls.join("")).toContain("Mode: replay");
-    expect(stderr.mock.calls.join("")).not.toContain("Browser: headless");
+  });
+
+  it("shows resume and headless in the startup banner", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: true,
+      replay: false,
+      headless: true,
+    });
+
+    await main();
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("Mode: resume");
+    expect(stderrText).toContain("Browser: headless");
   });
 
   it("writes the saved report path when report persistence succeeds", async () => {
@@ -246,7 +215,7 @@ describe("main composition", () => {
     expect(stderr.mock.calls.join("")).toContain("/tmp/report-dir");
   });
 
-  it("does not show mode line in the banner for a fresh (non-replay, non-resume) run", async () => {
+  it("writes capture diagnostics next to the saved report when available", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
@@ -255,30 +224,33 @@ describe("main composition", () => {
       replay: false,
       headless: false,
     });
-
-    await main();
-
-    const stderrText = stderr.mock.calls
-      .map(([text]: [unknown]) => String(text))
-      .join("");
-    expect(stderrText).not.toContain("Mode:");
-    expect(stderrText).not.toContain("Browser: headless");
-  });
-
-  it("does not show report saved message when saveReportFolder returns null", async () => {
-    const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
-      headless: false,
+    mocks.runStagehandCase.mockResolvedValue({
+      accumulatedEvents: [{ event: "purchase" }],
+      actionStepsTotal: 4,
+      toolCallsTotal: 6,
+      journeyCompleted: true,
+      humanInterventionNeeded: false,
+      captureDiagnostics: {
+        capturedEvents: [{ event: "addToCart" }],
+        rawDataLayerEvents: [{ event: "addToCart" }, { event: "purchase" }],
+      },
     });
-    mocks.saveReportFolder.mockResolvedValue(null);
+    mocks.saveReportFolder.mockResolvedValue("/tmp/report-dir");
 
     await main();
 
-    expect(stderr.mock.calls.join("")).not.toContain("Report saved");
+    expect(mocks.writeFile).toHaveBeenCalledWith(
+      "/tmp/report-dir/capture-diagnostics.json",
+      JSON.stringify(
+        {
+          capturedEvents: [{ event: "addToCart" }],
+          rawDataLayerEvents: [{ event: "addToCart" }, { event: "purchase" }],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
   });
 
   it("suppresses banner and progress output in quiet mode", async () => {
@@ -323,26 +295,8 @@ describe("main composition", () => {
     expect(stderrText).toContain("Validating events");
   });
 
-  it("does not show report saved when saveReportFolder rejects", async () => {
+  it("loads credentials and threads them into the journey hint when available", async () => {
     const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
-      headless: false,
-    });
-    mocks.saveReportFolder.mockRejectedValue(new Error("disk full"));
-
-    await main();
-
-    expect(stderr.mock.calls.join("")).not.toContain("Report saved");
-  });
-
-  it("loads credentials and passes store to buildAgentTools when --credentials is set", async () => {
-    const { main, mocks } = await setupMainModule();
-    const mockStore = { get: vi.fn(), fieldSummary: () => [] };
-    mocks.loadCredentials.mockResolvedValue(mockStore);
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
@@ -355,53 +309,50 @@ describe("main composition", () => {
     await main();
 
     expect(mocks.loadCredentials).toHaveBeenCalledWith("./creds.json");
-    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
-      expect.any(Array),
-      false,
-      undefined,
-      mockStore,
-      expect.objectContaining({ verbosity: expect.any(String) }),
+    expect(mocks.runStagehandCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        journey_hint: expect.stringContaining("Available credential fields"),
+      }),
+      expect.objectContaining({
+        headless: false,
+        variables: {
+          email: {
+            value: "a@b.com",
+            description: "Login email",
+          },
+        },
+        onInterventionNeeded: expect.any(Function),
+      }),
     );
   });
 
-  it("does not load credentials when --credentials is not set", async () => {
-    const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
-      headless: false,
-    });
+  it("passes the configured phase timeout from env", async () => {
+    const previous = process.env["STAGEHAND_PHASE_TIMEOUT_MS"];
+    try {
+      process.env["STAGEHAND_PHASE_TIMEOUT_MS"] = "240000";
+      const { main, mocks } = await setupMainModule();
+      mocks.resolveArgs.mockResolvedValue({
+        schemaUrl: "https://example.com/schema.json",
+        targetUrl: "https://example.com",
+        resume: false,
+        replay: false,
+        headless: false,
+      });
 
-    await main();
+      await main();
 
-    expect(mocks.loadCredentials).not.toHaveBeenCalled();
-    expect(mocks.buildAgentTools).toHaveBeenCalledWith(
-      expect.any(Array),
-      false,
-      undefined,
-      undefined,
-      expect.objectContaining({ verbosity: expect.any(String) }),
-    );
-  });
-
-  it("pushes landing events into the shared accumulator after building tools", async () => {
-    const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
-      headless: false,
-    });
-    mocks.drainInterceptor.mockResolvedValue([{ event: "landing" }]);
-
-    await main();
-
-    // buildAgentTools receives the accumulator array (by reference);
-    // landing events are pushed into it after the browser opens.
-    const accArg = mocks.buildAgentTools.mock.calls[0][0] as unknown[];
-    expect(accArg).toContainEqual({ event: "landing" });
+      expect(mocks.runStagehandCase).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          headless: false,
+          phaseTimeoutMs: 240000,
+          onInterventionNeeded: expect.any(Function),
+        }),
+      );
+    } finally {
+      if (previous === undefined)
+        delete process.env["STAGEHAND_PHASE_TIMEOUT_MS"];
+      else process.env["STAGEHAND_PHASE_TIMEOUT_MS"] = previous;
+    }
   });
 });

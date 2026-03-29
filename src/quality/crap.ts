@@ -1,22 +1,22 @@
 import ts from "typescript";
 
-export interface CoverageLocation {
+interface CoverageLocation {
   line: number;
   column: number;
 }
 
-export interface CoverageRange {
+interface CoverageRange {
   start: CoverageLocation;
   end: CoverageLocation;
 }
 
-export interface FileCoverage {
+interface FileCoverage {
   path: string;
   statementMap: Record<string, CoverageRange>;
   s: Record<string, number>;
 }
 
-export interface FunctionReport {
+interface FunctionReport {
   filePath: string;
   name: string;
   complexity: number;

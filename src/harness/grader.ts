@@ -8,7 +8,7 @@ export interface GradeInput {
   no_progress_action_streak_max: number;
 }
 
-export interface GradeResult {
+interface GradeResult {
   status: "passed" | "failed";
   reasons: string[];
 }
@@ -71,9 +71,7 @@ export function gradeRun(
     const observedSet = new Set(input.observed_event_names);
     const found = forbiddenNames.filter((name) => observedSet.has(name));
     if (found.length > 0) {
-      reasons.push(
-        `forbidden events observed: [${found.join(", ")}]`,
-      );
+      reasons.push(`forbidden events observed: [${found.join(", ")}]`);
     }
   }
 
@@ -86,7 +84,10 @@ export function gradeRun(
 
   // 7. No-progress streak
   const maxNoProgress = budgets.max_no_progress_actions;
-  if (maxNoProgress !== undefined && input.no_progress_action_streak_max > maxNoProgress) {
+  if (
+    maxNoProgress !== undefined &&
+    input.no_progress_action_streak_max > maxNoProgress
+  ) {
     reasons.push(
       `no-progress streak exceeded: max streak ${input.no_progress_action_streak_max}, limit ${maxNoProgress}`,
     );

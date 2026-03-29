@@ -107,14 +107,11 @@ describe("project verification config", () => {
     expect(pkg.scripts?.["test:integration"]).toBe(
       "node --import tsx src/integration/run-suite.ts -- vitest run -c vitest.integration.config.ts",
     );
-    expect(pkg.scripts?.["test:integration:llm"]).toBe(
-      "node --import tsx src/integration/run-suite.ts -- vitest run -c vitest.integration.config.ts src/integration/agent-assisted.integration.test.ts",
-    );
     expect(pkg.scripts?.["verify:local"]).toBe(
-      "npm run verify && env -u AGENT_BROWSER_HEADED npm run test:integration && env -u AGENT_BROWSER_HEADED npm run test:integration:llm",
+      "npm run verify && npm run test:integration",
     );
     expect(pkg.scripts?.["verify:local:headed"]).toBe(
-      "npm run verify && AGENT_BROWSER_HEADED=true npm run test:integration && AGENT_BROWSER_HEADED=true npm run test:integration:llm",
+      "npm run verify && npm run test:integration",
     );
     expect(existsSync(join(ROOT, "vitest.integration.config.ts"))).toBe(true);
     const defaultVitestConfig = readFileSync(

@@ -11,12 +11,12 @@
   "allowed_actions": ["navigate", "click", "fill", "dismiss-consent"],
   "expected_signals": {
     "tracking_surfaces": ["dataLayer"],
-    "event_names_any_of": ["page_view", "view_item", "add_to_cart", "begin_checkout", "purchase"],
+    "event_names_any_of": ["page_view", "pageview", "view_item", "productView", "add_to_cart", "addToCart", "begin_checkout", "checkout", "purchase"],
     "event_name_prefixes_any_of": [],
     "event_property_keys_any_of": ["event", "ecommerce"],
     "min_events_total": 3,
     "min_unique_event_names": 2,
-    "important_event_names_any_of": ["add_to_cart", "begin_checkout"]
+    "important_event_names_any_of": ["add_to_cart", "addToCart", "begin_checkout", "checkout"]
   },
   "negative_signals": {
     "forbidden_event_names": [],
@@ -38,5 +38,5 @@
     "strictness": "medium"
   },
   "human_baseline_id": null,
-  "notes": "Live discovery case for hirmer.de. No exact schema required. Expects standard GA4/GTM ecommerce events."
+  "notes": "Live discovery case for hirmer.de. Uses Universal Analytics (UA) style event names: addToCart, checkout, productView, pageview — not GA4 snake_case. Both formats listed in expected_signals for robustness."
 }

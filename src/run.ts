@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { main } from "./main.js";
-import { ConfigurationError } from "./agent/runtime.js";
 
 type WriteFn = (text: string) => void;
 type ExitFn = (code: number) => never;
@@ -20,7 +19,11 @@ export function handleMainError(
   write: WriteFn = (text) => process.stderr.write(text),
   exit: ExitFn = (code) => process.exit(code),
 ): never {
-  if (err instanceof ConfigurationError) {
+  if (
+    err instanceof Error &&
+    (err.name === "ConfigurationError" ||
+      err.message.toLowerCase().includes("requires"))
+  ) {
     write(err.message);
   } else {
     write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -28,13 +31,19 @@ export function handleMainError(
   return exit(1);
 }
 
-export function run(): void {
-  loadEnvIfPresent();
-  main().catch((err: unknown) => {
-    handleMainError(err);
-  });
+export async function run(
+  mainFn: () => Promise<void> = main,
+  loadEnvFile: () => void = process.loadEnvFile,
+  onError: (err: unknown) => never = handleMainError,
+): Promise<void> {
+  loadEnvIfPresent(loadEnvFile);
+  try {
+    await mainFn();
+  } catch (err) {
+    onError(err);
+  }
 }
 
 if (process.env["VITEST"] !== "true") {
-  run();
+  await run();
 }

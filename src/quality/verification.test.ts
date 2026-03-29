@@ -4,7 +4,7 @@ import {
   countEventsByType,
   mergeUniqueEvents,
   resolveSchemaForEvent,
-} from "../browser/runner.js";
+} from "../browser/report.js";
 import type { EventSchema } from "../schema.js";
 
 const eventArbitrary = fc.oneof(

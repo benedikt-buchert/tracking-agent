@@ -65,6 +65,10 @@
         "unique_pages_visited": { "type": "integer", "minimum": 0 },
         "events_extracted_total": { "type": "integer", "minimum": 0 },
         "unique_event_names": { "type": "integer", "minimum": 0 },
+        "observed_event_names": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "important_events_found": { "type": "integer", "minimum": 0 },
         "navigation_progress_score": { "type": "integer", "minimum": 0 },
         "stuck_loops_detected": { "type": "integer", "minimum": 0 },

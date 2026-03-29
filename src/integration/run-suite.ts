@@ -1,10 +1,22 @@
 import { spawn } from "child_process";
-import { closeBrowser } from "../browser/runner.js";
+import { existsSync } from "fs";
+import { resolve } from "path";
+import { pathToFileURL } from "url";
 
-async function bestEffortCloseBrowser(): Promise<void> {
-  await closeBrowser().catch(() => {
-    /* non-fatal cleanup */
-  });
+export function resolveCommand(
+  command: string,
+  {
+    cwd = process.cwd(),
+    existsSyncFn = existsSync,
+  }: {
+    cwd?: string;
+    existsSyncFn?: typeof existsSync;
+  } = {},
+): string {
+  if (command.includes("/") || command.includes("\\")) return command;
+
+  const localBin = resolve(cwd, "node_modules", ".bin", command);
+  return existsSyncFn(localBin) ? localBin : command;
 }
 
 async function main(): Promise<void> {
@@ -17,18 +29,16 @@ async function main(): Promise<void> {
   }
 
   const [command, ...args] = commandArgs;
-
-  await bestEffortCloseBrowser();
+  const resolvedCommand = resolveCommand(command!);
 
   const exitCode = await new Promise<number>((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(resolvedCommand, args, {
       stdio: "inherit",
       env: process.env,
     });
 
     const forwardSignal = async (signal: NodeJS.Signals) => {
       child.kill(signal);
-      await bestEffortCloseBrowser();
       process.exit(1);
     };
 
@@ -45,8 +55,15 @@ async function main(): Promise<void> {
     });
   });
 
-  await bestEffortCloseBrowser();
   process.exit(exitCode);
 }
 
-await main();
+function isEntrypoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return pathToFileURL(entry).href === import.meta.url;
+}
+
+if (isEntrypoint()) {
+  await main();
+}

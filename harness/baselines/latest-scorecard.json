@@ -1,0 +1,33 @@
+{
+  "baseline_id": "2026-03-27-retail-discovery-v1",
+  "captured_at": "2026-03-27T21:33:56.058Z",
+  "notes": "Checked-in harness benchmark snapshot. Update only deliberately when you want to ratchet expectations.",
+  "cases": [
+    {
+      "case_id": "hirmer-discovery-01",
+      "site_id": "hirmer",
+      "lane": "discovery_live_target",
+      "source_result": "harness/results/2026-03-27T21-25-09-439Z-hirmer-discovery-01.json",
+      "status": "passed",
+      "metrics": {
+        "action_steps_total": 25,
+        "tool_calls_total": 39,
+        "events_extracted_total": 51,
+        "unique_event_names": 12
+      }
+    },
+    {
+      "case_id": "google-merch-discovery-01",
+      "site_id": "google-merch-store",
+      "lane": "discovery_live_holdout",
+      "source_result": "harness/results/2026-03-27T21-33-56-058Z-google-merch-discovery-01.json",
+      "status": "passed",
+      "metrics": {
+        "action_steps_total": 30,
+        "tool_calls_total": 81,
+        "events_extracted_total": 53,
+        "unique_event_names": 15
+      }
+    }
+  ]
+}

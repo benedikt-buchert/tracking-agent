@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Tool Test Fixture</title>
+        <style>
+            body {
+                font-family: sans-serif;
+                margin: 0;
+                padding: 1rem;
+            }
+            .section {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 0.5rem;
+                margin: 0.5rem 0;
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                flex-wrap: wrap;
+            }
+            label {
+                font-size: 0.8rem;
+                color: #555;
+                min-width: 80px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Tool Test Fixture</h1>
+
+        <!-- click -->
+        <div class="section" id="s-click">
+            <label>click</label>
+            <button
+                data-testid="click-target"
+                onclick="
+                    this.setAttribute('data-clicked', 'true');
+                    this.textContent = 'Clicked';
+                "
+            >
+                Click me
+            </button>
+        </div>
+
+        <!-- fill -->
+        <div class="section" id="s-fill">
+            <label>fill</label>
+            <input
+                data-testid="fill-input"
+                id="fill-input"
+                type="text"
+                placeholder="Fill here"
+            />
+        </div>
+
+        <!-- find -->
+        <div class="section" id="s-find">
+            <label>find</label>
+            <button
+                data-testid="find-target"
+                onclick="
+                    this.setAttribute('data-found', 'true');
+                    this.textContent = 'Found';
+                "
+            >
+                Find and click me
+            </button>
+        </div>
+
+        <div class="section" id="s-find-generic">
+            <label>find generic</label>
+            <div
+                id="generic-find-target"
+                role="button"
+                tabindex="0"
+                onclick="
+                    this.setAttribute('data-found', 'true');
+                    this.textContent = 'Generic CTA clicked';
+                "
+            >
+                GENERIC CTA
+            </div>
+        </div>
+
+        <!-- eval -->
+        <div class="section" id="s-eval">
+            <label>eval</label>
+            <span id="eval-target" data-value="eval-ok">eval target</span>
+        </div>
+
+        <!-- wait selector -->
+        <div class="section" id="s-wait">
+            <label>wait</label>
+            <button
+                id="show-wait-target-btn"
+                onclick="
+                    setTimeout(function () {
+                        var e = document.createElement('div');
+                        e.id = 'wait-target';
+                        e.setAttribute('data-testid', 'wait-target');
+                        e.textContent = 'appeared';
+                        document.getElementById('s-wait').appendChild(e);
+                    }, 300)
+                "
+            >
+                Show element (300ms)
+            </button>
+        </div>
+
+        <!-- wait text -->
+        <div class="section" id="s-wait-text">
+            <label>wait text</label>
+            <button
+                id="show-delayed-text-btn"
+                onclick="
+                    setTimeout(function () {
+                        var e = document.createElement('span');
+                        e.id = 'delayed-text';
+                        e.textContent = 'UniqueDelayedText99';
+                        document.getElementById('s-wait-text').appendChild(e);
+                    }, 300)
+                "
+            >
+                Insert text (300ms)
+            </button>
+        </div>
+
+        <!-- hover -->
+        <div class="section" id="s-hover">
+            <label>hover</label>
+            <div
+                id="hover-trigger"
+                data-testid="hover-trigger"
+                style="
+                    padding: 0.4rem 0.8rem;
+                    background: #eee;
+                    border-radius: 4px;
+                    cursor: pointer;
+                "
+            >
+                Hover over me
+            </div>
+            <div
+                id="hover-menu"
+                data-testid="hover-menu"
+                style="
+                    display: none;
+                    padding: 0.3rem 0.6rem;
+                    border: 1px solid #ccc;
+                "
+            >
+                Hover menu
+            </div>
+        </div>
+
+        <!-- select -->
+        <div class="section" id="s-select">
+            <label>select</label>
+            <select data-testid="select-input" id="select-input">
+                <option value="">-- choose --</option>
+                <option value="apple">Apple</option>
+                <option value="banana">Banana</option>
+                <option value="cherry">Cherry</option>
+            </select>
+            <span id="select-output"></span>
+        </div>
+
+        <!-- press -->
+        <div class="section" id="s-press">
+            <label>press</label>
+            <input
+                id="press-input"
+                data-testid="press-input"
+                type="text"
+                placeholder="Press a key"
+            />
+            <div id="press-output"></div>
+        </div>
+
+        <!-- async-datalayer: button that pushes to dataLayer after a 500ms delay -->
+        <div class="section" id="s-async-dl">
+            <label>async-dl</label>
+            <button
+                data-testid="async-dl-trigger"
+                onclick="
+                    window.dataLayer = window.dataLayer || [];
+                    setTimeout(function () {
+                        window.dataLayer.push({
+                            event: 'async_add_to_cart',
+                            value: 42,
+                        });
+                    }, 500);
+                "
+            >
+                Async push
+            </button>
+        </div>
+
+        <!-- nav-link: anchor inside an overflow container (simulates carousel) -->
+        <!-- The link's center is pushed below the visible area of the container,  -->
+        <!-- so a plain click without scrollintoview would miss it.                -->
+        <div class="section" id="s-navlink">
+            <label>nav-link</label>
+            <div
+                style="
+                    overflow: hidden;
+                    height: 40px;
+                    width: 200px;
+                    position: relative;
+                "
+            >
+                <div style="position: absolute; top: 60px">
+                    <a data-testid="nav-link" href="page2.html">Go to page 2</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- scroll target (page-level scroll) -->
+        <div
+            style="
+                height: 3000px;
+                background: linear-gradient(to bottom, #f9f9f9, #e0e0e0);
+                margin-top: 1rem;
+                position: relative;
+            "
+        >
+            <span style="position: absolute; bottom: 0; left: 0; padding: 1rem"
+                >bottom of spacer</span
+            >
+        </div>
+        <div
+            id="scroll-target"
+            data-testid="scroll-target"
+            style="
+                padding: 1rem;
+                background: #c8f0c8;
+                border-radius: 4px;
+                margin: 1rem;
+            "
+        >
+            Scroll target reached
+        </div>
+
+        <script>
+            // hover: use addEventListener so multiline inline handler issues are avoided
+            document
+                .getElementById("hover-trigger")
+                .addEventListener("mouseenter", function () {
+                    this.setAttribute("data-hovered", "true");
+                    document.getElementById("hover-menu").style.display =
+                        "block";
+                });
+
+            // select: track change event
+            document
+                .getElementById("select-input")
+                .addEventListener("change", function () {
+                    document
+                        .getElementById("select-output")
+                        .setAttribute("data-selected", this.value);
+                    document.getElementById("select-output").textContent =
+                        "Selected: " + this.value;
+                });
+
+            // press: global keydown listener (no focus dependency)
+            window.addEventListener("keydown", function (e) {
+                var out = document.getElementById("press-output");
+                if (e.key === "Enter") {
+                    out.textContent = "Enter";
+                    out.setAttribute("data-pressed", "true");
+                } else if (e.key === "Tab") {
+                    out.textContent = "Tab";
+                    out.setAttribute("data-pressed", "tab");
+                }
+            });
+        </script>
+    </body>
+</html>

@@ -3,6 +3,9 @@ const ACTION_TOOLS = new Set([
   "browser_navigate",
   "browser_click",
   "browser_fill",
+  "browser_hover",
+  "browser_select",
+  "browser_press",
 ]);
 
 // browser_find counts as an action step only when action=click or action=fill
@@ -10,7 +13,7 @@ const BROWSER_FIND_ACTION_VALUES = new Set(["click", "fill"]);
 
 // Observation/utility tools (do NOT count as action steps)
 // browser_snapshot, browser_screenshot, browser_eval, browser_wait,
-// get_datalayer, skip_task, request_human_input
+// browser_scroll, get_datalayer, skip_task, request_human_input
 
 export interface ToolCall {
   toolName: string;
@@ -24,6 +27,9 @@ export interface ToolCall {
  * - browser_navigate
  * - browser_click
  * - browser_fill
+ * - browser_hover
+ * - browser_select
+ * - browser_press
  * - browser_find with action=click or action=fill
  *
  * Observation tools, waits, data reads, and utility calls are NOT counted.

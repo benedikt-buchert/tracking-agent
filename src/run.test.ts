@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ConfigurationError } from "./agent/runtime.js";
-import { handleMainError, loadEnvIfPresent } from "./run.js";
+import { handleMainError, loadEnvIfPresent, run } from "./run.js";
 
 describe("loadEnvIfPresent", () => {
   it("calls the loader when it succeeds", () => {
@@ -40,9 +39,11 @@ describe("handleMainError", () => {
     const exit = vi.fn(() => {
       throw new Error("exit");
     });
+    const configurationError = new Error("missing key");
+    configurationError.name = "ConfigurationError";
 
     expect(() =>
-      handleMainError(new ConfigurationError("missing key"), write, exit as never),
+      handleMainError(configurationError, write, exit as never),
     ).toThrow("exit");
     expect(write).toHaveBeenCalledWith("missing key");
     expect(exit).toHaveBeenCalledWith(1);
@@ -68,5 +69,46 @@ describe("handleMainError", () => {
 
     expect(() => handleMainError("bad", write, exit as never)).toThrow("exit");
     expect(write).toHaveBeenCalledWith("Error: bad\n");
+  });
+});
+
+describe("run", () => {
+  it("awaits main before returning", async () => {
+    const loadEnvFile = vi.fn();
+    const steps: string[] = [];
+    const mainFn = vi.fn(async () => {
+      await Promise.resolve();
+      steps.push("main");
+    });
+
+    await run(
+      mainFn,
+      loadEnvFile,
+      vi.fn(() => {
+        throw new Error("should not be called");
+      }),
+    );
+
+    expect(loadEnvFile).toHaveBeenCalledTimes(1);
+    expect(mainFn).toHaveBeenCalledTimes(1);
+    expect(steps).toEqual(["main"]);
+  });
+
+  it("routes main failures through the shared error handler", async () => {
+    const error = new Error("boom");
+    const onError = vi.fn(() => {
+      throw new Error("handled");
+    });
+
+    await expect(
+      run(
+        async () => {
+          throw error;
+        },
+        vi.fn(),
+        onError,
+      ),
+    ).rejects.toThrow("handled");
+    expect(onError).toHaveBeenCalledWith(error);
   });
 });

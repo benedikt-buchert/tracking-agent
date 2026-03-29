@@ -89,10 +89,13 @@ export interface RunOutcome {
 export interface RunMetrics {
   action_steps_total: number;
   tool_calls_total: number;
+  elapsed_ms?: number;
+  ms_per_action_step?: number;
   navigation_count?: number;
   unique_pages_visited?: number;
   events_extracted_total: number;
   unique_event_names: number;
+  observed_event_names?: string[];
   important_events_found?: number;
   navigation_progress_score?: number;
   stuck_loops_detected?: number;
@@ -134,15 +137,4 @@ export interface RunResult {
   metrics: RunMetrics;
   human_comparison?: HumanComparison | null;
   artifacts?: RunArtifacts;
-}
-
-// ─── Observed Metrics (harness-internal, used by grader) ─────────────────────
-
-export interface ObservedMetrics {
-  action_steps_total: number;
-  tool_calls_total: number;
-  events_extracted_total: number;
-  unique_event_names: number;
-  observed_event_names: string[];
-  no_progress_action_streak_max: number;
 }
