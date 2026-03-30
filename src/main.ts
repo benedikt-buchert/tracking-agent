@@ -80,9 +80,7 @@ function resolvePhaseTimeoutMs(
   return parsed;
 }
 
-async function promptForIntervention(
-  phase: string,
-): Promise<"continue" | "stop"> {
+async function promptForIntervention(): Promise<"continue" | "stop"> {
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -97,7 +95,7 @@ async function promptForIntervention(
   try {
     process.stderr.write(
       chalk.yellow(
-        `\n  Stagehand paused during ${phase}. Take over in the open browser if needed.\n`,
+        `\n  Stagehand paused. Take over in the open browser if needed.\n`,
       ),
     );
     const answer = await readline.question(
@@ -168,7 +166,7 @@ export async function main(): Promise<void> {
     headless,
     phaseTimeoutMs: resolvePhaseTimeoutMs(),
     variables: stagehandVariables,
-    onInterventionNeeded: async ({ phase }) => promptForIntervention(phase),
+    onInterventionNeeded: async () => promptForIntervention(),
   });
   const events = stagehandRun.accumulatedEvents;
 

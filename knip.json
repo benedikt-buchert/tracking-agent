@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "vitest.integration.config.ts",
-    "integration-site/shared/fixture-store.js"
+    "integration-site/shared/fixture-store.js",
   ],
   "project": ["src/**/*.ts", "integration-site/shared/**/*.js", "*.config.ts"]
 }

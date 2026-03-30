@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Minimal CLI to run a single harness case by file path or case_id.
- * Usage: npx tsx src/harness/run-case-cli.ts harness/cases/hirmer-stage-purchase-01.json
+ * Minimal CLI to run a single harness case by file path.
+ * Usage: npx tsx src/harness/run-case-cli.ts harness/cases/my-case.json
  */
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { resolve, join } from "path";
@@ -40,6 +40,12 @@ const eventNames = result.accumulatedEvents
   .filter(Boolean);
 
 process.stderr.write(`Event names: ${[...new Set(eventNames)].join(", ")}\n\n`);
+
+if (result.captureDiagnostics) {
+  const raw = result.captureDiagnostics.rawDataLayerEvents;
+  process.stderr.write(`--- Raw dataLayer (${raw.length} entries) ---\n`);
+  process.stderr.write(JSON.stringify(raw, null, 2) + "\n\n");
+}
 
 const outPath = join(
   "harness",

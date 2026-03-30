@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/run.js",
     "dev": "npx tsx --env-file=.env src/run.ts",
+    "harness": "npx tsx --env-file=.env src/harness/run-case-cli.ts",
     "test": "vitest run",
     "test:integration": "node --import tsx src/integration/run-suite.ts -- vitest run -c vitest.integration.config.ts",
     "demo:serve": "node --import tsx src/integration/serve-demo.ts",
