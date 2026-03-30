@@ -1,13 +1,14 @@
 import { readFile } from "fs/promises";
 
-export interface CredentialField {
+interface CredentialField {
   description: string;
   value: string;
 }
 
-export interface CredentialStore {
+interface CredentialStore {
   get(name: string): string | undefined;
   fieldSummary(): { name: string; description: string }[];
+  stagehandVariables(): Record<string, { value: string; description: string }>;
 }
 
 type ReadFileFn = (path: string) => Promise<string>;
@@ -39,9 +40,7 @@ export async function loadCredentials(
     typeof (parsed as Record<string, unknown>)["fields"] !== "object" ||
     (parsed as Record<string, unknown>)["fields"] === null
   ) {
-    throw new Error(
-      `Credentials file must contain a "fields" object: ${path}`,
-    );
+    throw new Error(`Credentials file must contain a "fields" object: ${path}`);
   }
 
   const fields = (parsed as { fields: Record<string, unknown> }).fields;
@@ -66,9 +65,7 @@ export async function loadCredentials(
       );
     }
     if (typeof f["value"] !== "string") {
-      throw new Error(
-        `Credential field "${name}" must have a string "value"`,
-      );
+      throw new Error(`Credential field "${name}" must have a string "value"`);
     }
     store.set(name, {
       description: f["description"],
@@ -86,6 +83,20 @@ export async function loadCredentials(
         description: field.description,
       }));
     },
+    stagehandVariables(): Record<
+      string,
+      { value: string; description: string }
+    > {
+      return Object.fromEntries(
+        [...store.entries()].map(([name, field]) => [
+          name,
+          {
+            value: field.value,
+            description: field.description,
+          },
+        ]),
+      );
+    },
   };
 }
 
@@ -97,8 +108,8 @@ export function formatCredentialsSummary(
     "## Available credential fields",
     "",
     "You have access to pre-loaded credential values for the following fields.",
-    "Use the `fill_credential` tool to fill these into form elements. Never ask",
-    "the user for these values — they are already provided.",
+    "Use the provided Stagehand variables for matching fields. Never ask the",
+    "user for these values — they are already provided.",
     "",
   ];
   for (const f of fields) {

@@ -2,7 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { fileURLToPath } from "url";
 
-export type ReadFileFn = (path: string, encoding: "utf8") => Promise<string>;
+type ReadFileFn = (path: string, encoding: "utf8") => Promise<string>;
 export type LoadSchemaFn = (uri: string) => Promise<Record<string, unknown>>;
 
 export async function defaultLoadSchema(

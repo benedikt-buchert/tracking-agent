@@ -1,6 +1,6 @@
 # tracking-agent
 
-A browser-based agent that validates a website's `dataLayer` events against a JSON Schema.
+A Stagehand-based agent that validates a website's `dataLayer` events against a JSON Schema.
 
 ## Demo
 
@@ -26,13 +26,11 @@ Prerequisites:
 
 - Node.js 20+
 - npm
-- Chrome installed via `tracking-agent-install-browser`
 
 Install from npm:
 
 ```bash
 npm install -g tracking-agent
-tracking-agent-install-browser
 ```
 
 That installs the `tracking-agent` CLI globally so you can run it from any directory.
@@ -55,7 +53,6 @@ tracking-agent --schema <url> --url <url> [options]
 | `--url` | URL of the website to test |
 | `--schemas-dir` | Local directory of schema files — used instead of remote fetches when available |
 | `--resume` | Resume a previous session from `.tracking-agent-session.json` |
-| `--replay` | Replay recorded steps from `.tracking-agent-playbook.json` (LLM fallback on failure) |
 | `--credentials` | Path to a JSON credentials file for sensitive form fields (see [Credentials](#credentials)) |
 | `--headless` | Run the browser in the background (no visible window) |
 | `--quiet` | Suppress all progress output — only errors and the final report are shown |
@@ -107,7 +104,7 @@ Only put **sensitive fields** here — things that should never appear in logs:
 - Passwords and PINs
 - API keys or tokens used as form inputs
 
-Non-sensitive form data (email addresses, postal codes, names) should be left as regular `browser_fill` or `browser_find` steps in the playbook.
+Non-sensitive form data (email addresses, postal codes, names) should be left in the site flow and handled directly by the Stagehand journey.
 
 ### Security
 
@@ -128,14 +125,17 @@ Non-sensitive form data (email addresses, postal codes, names) should be left as
 
 | Variable | Description |
 |----------|-------------|
-| `MODEL_PROVIDER` | AI provider — `anthropic` (default), `openai`, or `google-vertex` |
-| `MODEL_ID` | Model ID (default: `claude-opus-4-6`) |
-| `ANTHROPIC_API_KEY` | Required for `anthropic` provider |
-| `OPENAI_API_KEY` | Required for `openai` provider |
-| `GOOGLE_CLOUD_PROJECT` | Required for `google-vertex` provider |
-| `GOOGLE_CLOUD_LOCATION` | Required for `google-vertex` provider |
+| `STAGEHAND_MODEL` | Primary Stagehand model, for example `vertex/gemini-2.5-pro` |
+| `STAGEHAND_PROJECT` | GCP project for Vertex-backed Stagehand models |
+| `STAGEHAND_LOCATION` | Vertex location for `STAGEHAND_MODEL` |
+| `STAGEHAND_AGENT_MODEL` | Optional hybrid agent model override |
+| `STAGEHAND_EXECUTION_MODEL` | Optional hybrid execution model override |
+| `STAGEHAND_AGENT_LOCATION` | Vertex location for `STAGEHAND_AGENT_MODEL` |
+| `STAGEHAND_EXECUTION_LOCATION` | Vertex location for `STAGEHAND_EXECUTION_MODEL` |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Required when using `google/...` Stagehand models |
+| `OPENAI_API_KEY` | Required when using `openai/...` Stagehand models |
 
-For Google Vertex auth: `gcloud auth application-default login`
+For Vertex auth: `gcloud auth application-default login`
 
 ## Publishing
 
@@ -152,54 +152,47 @@ This workflow uses GitHub OIDC trusted publishing, so no npm token secret is req
 ## Quick start
 
 ```bash
-# Run with an Anthropic key
-ANTHROPIC_API_KEY=sk-... tracking-agent \
+# Run with a direct Stagehand Google model
+GOOGLE_GENERATIVE_AI_API_KEY=... \
+STAGEHAND_MODEL=google/gemini-3-flash-preview \
+tracking-agent \
   --schema https://example.com/schema.json \
   --url    https://example.com
 
-# Headless (CI / no display)
-ANTHROPIC_API_KEY=sk-... tracking-agent \
+# Run with Vertex
+STAGEHAND_MODEL=vertex/gemini-2.5-pro \
+STAGEHAND_PROJECT=my-gcp-project \
+STAGEHAND_LOCATION=europe-west4 \
+tracking-agent \
   --schema https://example.com/schema.json \
   --url    https://example.com \
   --headless
 
 # Resume a previous session
 tracking-agent --resume
-
-# Replay a saved playbook
-tracking-agent \
-  --schema https://example.com/schema.json \
-  --url    https://example.com \
-  --replay
 ```
 
 ## Demo commands
 
-Deterministic replay without relying on LLM recovery:
+Deterministic demo run:
 
 ```bash
-cp demo-playbooks/deterministic.json .tracking-agent-playbook.json
-
 tracking-agent \
   --schema https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json \
   --url    https://benedikt-buchert.github.io/tracking-agent/deterministic/ \
-  --replay \
   --headless
 ```
 
-Mutated demo run to show where deterministic replay breaks:
+Mutated demo run:
 
 ```bash
-cp demo-playbooks/deterministic.json .tracking-agent-playbook.json
-
 tracking-agent \
   --schema https://tracking-docs-demo.buchert.digital/schemas/1.3.0/event-reference.json \
   --url    https://benedikt-buchert.github.io/tracking-agent/mutated/ \
-  --replay \
   --headless
 ```
 
-If model credentials are configured, the mutated run is the better demo for recovery and exploration after replay gets stuck. If no model credentials are configured, the deterministic run is the better demo because it can complete via replay alone.
+The mutated run is the better demo for recovery and exploration across page changes.
 
 ## Local pre-merge verification
 
@@ -216,19 +209,7 @@ That runs:
 - lint
 - unit tests
 - typecheck
-- browser integration tests against the demo fixture
-- gated LLM-assisted integration smoke tests
-
-The LLM-assisted integration test only runs when both conditions are true:
-
-- `RUN_LLM_INTEGRATION=1`
-- model credentials are configured
-
-Example:
-
-```bash
-RUN_LLM_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... npm run verify:local
-```
+- integration tests against the demo fixture
 
 ## Development
 
@@ -238,7 +219,6 @@ All non-trivial changes follow red-green-refactor: write the smallest failing te
 npm test             # run all unit tests
 npm run test:watch   # watch mode
 npm run test:integration  # run integration tests against the fixture
-npm run test:integration:llm  # run the gated LLM-assisted integration test
 npm run verify:local  # full local pre-merge verification (forces headless integration)
 npm run verify:local:headed  # same flow, but with a visible browser for debugging
 npm run demo:serve   # serve the demo fixture locally

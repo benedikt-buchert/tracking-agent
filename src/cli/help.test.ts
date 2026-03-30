@@ -14,13 +14,14 @@ describe("buildHelpText", () => {
     expect(help).toContain("--quiet");
     expect(help).toContain("--verbose");
     expect(help).toContain("--credentials");
-    expect(help).toContain("MODEL_PROVIDER");
-    expect(help).toContain("GOOGLE_CLOUD_PROJECT");
+    expect(help).toContain("STAGEHAND_MODEL");
+    expect(help).toContain("STAGEHAND_PROJECT");
   });
 
-  it("includes the replay fallback note and vertex auth hint", () => {
+  it("includes the Stagehand env hints", () => {
     const help = buildHelpText();
-    expect(help).toContain("LLM fallback on failure");
+    expect(help).toContain("STAGEHAND_EXECUTION_MODEL");
+    expect(help).toContain("GOOGLE_GENERATIVE_AI_API_KEY");
     expect(help).toContain("gcloud auth application-default login");
   });
 
@@ -45,7 +46,6 @@ describe("buildHelpText", () => {
     --url     URL of the website to test
     --schemas-dir  Local directory of schema files (used instead of remote fetches)
     --resume  Resume a previous session from .tracking-agent-session.json
-    --replay    Replay recorded steps from .tracking-agent-playbook.json (LLM fallback on failure)
     --credentials  Path to a JSON file with credential fields (see docs)
     --headless  Run the browser in the background (no visible window)
     --quiet     Suppress all progress output (only errors and the final report)
@@ -53,13 +53,16 @@ describe("buildHelpText", () => {
     --help      Show this help message
 
   Environment
-    MODEL_PROVIDER         AI provider (default: anthropic)
-    MODEL_ID               Model ID (default: claude-opus-4-6)
-    ANTHROPIC_API_KEY       For anthropic provider
-    OPENAI_API_KEY          For openai provider
-    GOOGLE_CLOUD_PROJECT    For google-vertex provider
-    GOOGLE_CLOUD_LOCATION   For google-vertex provider
-    Google Vertex auth: gcloud auth application-default login`);
+    STAGEHAND_MODEL               Primary Stagehand model (required)
+    STAGEHAND_PROJECT             GCP project for Vertex models
+    STAGEHAND_LOCATION            Vertex location for STAGEHAND_MODEL
+    STAGEHAND_AGENT_MODEL         Hybrid agent model override
+    STAGEHAND_EXECUTION_MODEL     Hybrid execution model override
+    STAGEHAND_AGENT_LOCATION      Vertex location for STAGEHAND_AGENT_MODEL
+    STAGEHAND_EXECUTION_LOCATION  Vertex location for STAGEHAND_EXECUTION_MODEL
+    GOOGLE_GENERATIVE_AI_API_KEY  Google model API key when using google/... models
+    OPENAI_API_KEY                OpenAI API key when using openai/... models
+    Vertex auth: gcloud auth application-default login`);
   });
 });
 

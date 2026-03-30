@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-export interface CliArgs {
+interface CliArgs {
   schemaUrl: string;
   targetUrl: string;
   resume: boolean;
@@ -12,7 +12,7 @@ export interface CliArgs {
   credentials?: string;
 }
 
-export interface ParsedArgs {
+interface ParsedArgs {
   schemaUrl?: string;
   targetUrl?: string;
   resume: boolean;
@@ -25,12 +25,19 @@ export interface ParsedArgs {
   credentials?: string;
 }
 
-export type PromptFn = (question: string) => Promise<string>;
-export type ReadFileFn = (path: string) => Promise<string>;
+type PromptFn = (question: string) => Promise<string>;
+type ReadFileFn = (path: string) => Promise<string>;
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv.includes("--help") || argv.includes("-h"))
-    return { help: true, resume: false, replay: false, headless: false, quiet: false, verbose: false };
+    return {
+      help: true,
+      resume: false,
+      replay: false,
+      headless: false,
+      quiet: false,
+      verbose: false,
+    };
   const args: Record<string, string> = {};
   for (let i = 0; i < argv.length - 1; i++) {
     if (argv[i] === "--schema") args["schema"] = argv[i + 1];
