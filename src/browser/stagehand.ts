@@ -222,6 +222,10 @@ const DATA_LAYER_INIT_SCRIPT = `(() => {
   if (w.__dl_intercepted) return;
   w.__dl_intercepted = true;
 
+  // Capture original push BEFORE any patching so patchLayer and the
+  // Array.prototype override both use it — prevents double-fire.
+  const nativePush = Array.prototype.push;
+
   const loadPersisted = () => {
     try {
       const parsed = JSON.parse(sessionStorage.getItem(storageKey) || '[]');
@@ -234,12 +238,12 @@ const DATA_LAYER_INIT_SCRIPT = `(() => {
   const persist = (item) => {
     try {
       const persisted = loadPersisted();
-      persisted.push(item);
+      nativePush.call(persisted, item);
       sessionStorage.setItem(storageKey, JSON.stringify(persisted));
     } catch {}
     try {
       if (typeof w.${DATA_LAYER_BINDING_NAME} === 'function') {
-        void w.${DATA_LAYER_BINDING_NAME}(item);
+        void w.${DATA_LAYER_BINDING_NAME}(JSON.stringify(item));
       }
     } catch {}
   };
@@ -253,16 +257,16 @@ const DATA_LAYER_INIT_SCRIPT = `(() => {
       enumerable: false,
     });
     for (const item of layer) persist(item);
-    const originalPush = layer.push.bind(layer);
+    // Use nativePush so this call does NOT re-trigger the Array.prototype override.
+    const nativePushOnLayer = nativePush.bind(layer);
     layer.push = function(...items) {
       for (const item of items) persist(item);
-      return originalPush(...items);
+      return nativePushOnLayer(...items);
     };
     return layer;
   };
 
   if (!Array.prototype.__trackingAgentDataLayerPatched) {
-    const originalArrayPush = Array.prototype.push;
     Object.defineProperty(Array.prototype, '__trackingAgentDataLayerPatched', {
       value: true,
       configurable: true,
@@ -272,7 +276,7 @@ const DATA_LAYER_INIT_SCRIPT = `(() => {
       if (this === w.dataLayer) {
         for (const item of items) persist(item);
       }
-      return originalArrayPush.apply(this, items);
+      return nativePush.apply(this, items);
     };
   }
 
@@ -321,6 +325,49 @@ type StagehandPageLike = {
 
 type StagehandContextLike = StagehandInstance["context"];
 
+type CdpSessionLike = {
+  send: (method: string, params?: object) => Promise<unknown>;
+  on: (event: string, handler: (params: unknown) => void) => void;
+};
+
+async function tryInstallCdpBinding(
+  context: StagehandContextLike,
+  page: StagehandPageLike,
+  name: string,
+  onCall: (payload: string) => void,
+  debug: boolean,
+): Promise<boolean> {
+  try {
+    // Stagehand v3: context.conn is the root CdpConnection, page has sendCDP + getSessionForFrame
+    const v3Page = page as unknown as {
+      sendCDP?: (method: string, params?: object) => Promise<unknown>;
+      mainFrameId?: () => string;
+      getSessionForFrame?: (frameId: string) => CdpSessionLike;
+    };
+    // Use the page-level session (scoped to the tab)
+    const frameId = v3Page.mainFrameId?.();
+    const session: CdpSessionLike | undefined =
+      frameId && v3Page.getSessionForFrame
+        ? v3Page.getSessionForFrame(frameId)
+        : undefined;
+    if (!session) return false;
+
+    await session.send("Runtime.enable");
+    await session.send("Runtime.addBinding", { name });
+    session.on("Runtime.bindingCalled", (params: unknown) => {
+      const p = params as { name?: string; payload?: string };
+      if (p.name === name && typeof p.payload === "string") {
+        onCall(p.payload);
+      }
+    });
+    if (debug) process.stderr.write(`[capture] CDP binding installed via page session\n`);
+    return true;
+  } catch (err) {
+    if (debug) process.stderr.write(`[capture] CDP binding failed: ${err}\n`);
+    return false;
+  }
+}
+
 async function installDataLayerCapture(
   context: StagehandContextLike,
   page: StagehandPageLike,
@@ -333,15 +380,38 @@ async function installDataLayerCapture(
 }> {
   const capturedEvents: unknown[] = [];
   const captureHistory: unknown[] = [];
+  const debugCapture = process.env["TRACKING_AGENT_DEBUG_CAPTURE"] === "1";
   const capture = (...args: unknown[]) => {
     const event = args.at(-1);
     capturedEvents.push(event);
     captureHistory.push(event);
+    if (debugCapture) {
+      const name =
+        event && typeof event === "object"
+          ? ((event as Record<string, unknown>)["event"] ?? "(no event)")
+          : "(no event)";
+      process.stderr.write(`[capture] +${name}\n`);
+    }
   };
-  if (context.exposeBinding) {
-    await context.exposeBinding(DATA_LAYER_BINDING_NAME, capture);
-  } else {
-    await page.exposeBinding?.(DATA_LAYER_BINDING_NAME, capture);
+  // Try CDP binding first (Stagehand v3 — no exposeBinding).
+  // Fall back to exposeBinding for Playwright-direct and test environments.
+  const cdpInstalled = await tryInstallCdpBinding(
+    context,
+    page,
+    DATA_LAYER_BINDING_NAME,
+    (payload: string) => {
+      try {
+        capture(null, JSON.parse(payload));
+      } catch {}
+    },
+    debugCapture,
+  );
+  if (!cdpInstalled) {
+    const exposeTarget = context.exposeBinding ?? page.exposeBinding;
+    if (exposeTarget) {
+      await exposeTarget(DATA_LAYER_BINDING_NAME, capture);
+      if (debugCapture) process.stderr.write(`[capture] exposeBinding fallback installed\n`);
+    }
   }
 
   if (context.addInitScript) {

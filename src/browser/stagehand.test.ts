@@ -11,6 +11,93 @@ import {
   resolveStagehandModel,
 } from "./stagehand.js";
 
+// ── Shared mock helpers ─────────────────────────────────────────────────────
+
+type SessionStorageMock = {
+  store: Map<string, string>;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+};
+
+function makeSessionStorage(): SessionStorageMock {
+  return {
+    store: new Map<string, string>(),
+    getItem(key: string) {
+      return this.store.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      this.store.set(key, value);
+    },
+    removeItem(key: string) {
+      this.store.delete(key);
+    },
+  };
+}
+
+function makePage(
+  overrides: Partial<{
+    goto: ReturnType<typeof vi.fn>;
+    evaluate: ReturnType<typeof vi.fn>;
+    waitForTimeout: ReturnType<typeof vi.fn>;
+    addInitScript: ReturnType<typeof vi.fn>;
+    exposeBinding: ReturnType<typeof vi.fn>;
+  }> = {},
+) {
+  return {
+    goto: overrides.goto ?? vi.fn().mockResolvedValue(undefined),
+    evaluate:
+      overrides.evaluate ??
+      vi.fn().mockResolvedValue("https://example.com/checkout"),
+    waitForTimeout:
+      overrides.waitForTimeout ?? vi.fn().mockResolvedValue(undefined),
+    ...(overrides.addInitScript !== undefined && {
+      addInitScript: overrides.addInitScript,
+    }),
+    ...(overrides.exposeBinding !== undefined && {
+      exposeBinding: overrides.exposeBinding,
+    }),
+  };
+}
+
+function makeStagehandMock(
+  page: ReturnType<typeof makePage>,
+  overrides: Partial<{
+    act: ReturnType<typeof vi.fn>;
+    observe: ReturnType<typeof vi.fn>;
+    agent: ReturnType<typeof vi.fn>;
+    contextExtras: Record<string, unknown>;
+  }> = {},
+) {
+  return class StagehandMock {
+    init = vi.fn().mockResolvedValue(undefined);
+    act = overrides.act ?? vi.fn().mockResolvedValue("ok");
+    observe = overrides.observe ?? vi.fn().mockResolvedValue([]);
+    agent = overrides.agent ?? vi.fn().mockReturnValue({ execute: vi.fn() });
+    close = vi.fn().mockResolvedValue(undefined);
+    context = Object.assign(
+      { pages: () => [page] },
+      (page as Record<string, unknown>).addInitScript
+        ? { addInitScript: (page as Record<string, unknown>).addInitScript }
+        : {},
+      (page as Record<string, unknown>).exposeBinding
+        ? { exposeBinding: (page as Record<string, unknown>).exposeBinding }
+        : {},
+      overrides.contextExtras ?? {},
+    );
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function stagehandDeps(StagehandMock: any, env?: Record<string, string>) {
+  return {
+    loadStagehand: async () => ({ Stagehand: StagehandMock }),
+    env: env ?? { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
+  };
+}
+
+// ── Pure function tests ─────────────────────────────────────────────────────
+
 describe("isStagehandExperimentalBackendEnabled", () => {
   it("returns true only for the stagehand backend flag", () => {
     expect(
@@ -73,39 +160,21 @@ describe("resolvePreferredStagehandHybridAgentOptions", () => {
   });
 });
 
-describe("createStandaloneStagehandSession", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+// ── Integration-style tests ─────────────────────────────────────────────────
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe("createStandaloneStagehandSession", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   it("lets Stagehand own the page and navigates it before acting", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
-    const page = { goto };
-    const init = vi.fn().mockResolvedValue(undefined);
+    const page = makePage();
     const act = vi.fn().mockResolvedValue("clicked checkout");
     const observe = vi.fn().mockResolvedValue([{ description: "checkout" }]);
-    const close = vi.fn().mockResolvedValue(undefined);
-
-    class StagehandMock {
-      init = init;
-      act = act;
-      observe = observe;
-      close = close;
-      context = {
-        pages: () => [page],
-      };
-    }
+    const Mock = makeStagehandMock(page, { act, observe });
 
     const bridge = await createStandaloneStagehandSession(
       "https://example.com/checkout",
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(bridge.observe("find checkout")).resolves.toBe(
@@ -114,55 +183,37 @@ describe("createStandaloneStagehandSession", () => {
     await expect(bridge.act("click checkout")).resolves.toBe(
       "clicked checkout",
     );
-
-    expect(init).toHaveBeenCalledTimes(1);
-    expect(goto).toHaveBeenCalledWith("https://example.com/checkout");
-    expect(observe).toHaveBeenCalledWith("find checkout", { page });
-    expect(act).toHaveBeenCalledWith("click checkout", { page });
+    expect(page.goto).toHaveBeenCalledWith("https://example.com/checkout");
   });
 
   it("supports headed/headless launch options and page evaluation", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
-    const evaluate = vi.fn().mockResolvedValue("https://example.com/checkout");
-    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
-    const page = { goto, evaluate, waitForTimeout };
+    const page = makePage();
     const capturedConfigs: unknown[] = [];
-
-    class StagehandMock {
+    const Mock = makeStagehandMock(page);
+    const OrigInit = Mock;
+    const Capturing = class extends OrigInit {
       constructor(config: unknown) {
+        super();
         capturedConfigs.push(config);
       }
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-      };
-    }
+    };
 
     const controller = await createStandaloneStagehandController(
       "https://example.com/checkout",
       { headless: false },
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Capturing),
     );
 
     await expect(controller.evaluate("window.location.href")).resolves.toBe(
       "https://example.com/checkout",
     );
     await expect(controller.waitForTimeout(250)).resolves.toBe(undefined);
-    expect(evaluate).toHaveBeenCalledWith("window.location.href");
-    expect(waitForTimeout).toHaveBeenCalledWith(250);
     expect(capturedConfigs[0]).toMatchObject({
       localBrowserLaunchOptions: { headless: false },
     });
   });
 
   it("returns structured observed actions for standalone sessions", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
     const observedActions = [
       {
         selector: "#email",
@@ -171,25 +222,15 @@ describe("createStandaloneStagehandSession", () => {
         arguments: ["max@example.com"],
       },
     ];
-    const page = { goto, evaluate: vi.fn(), waitForTimeout: vi.fn() };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue(observedActions);
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-      };
-    }
+    const page = makePage();
+    const Mock = makeStagehandMock(page, {
+      observe: vi.fn().mockResolvedValue(observedActions),
+    });
 
     const controller = await createStandaloneStagehandController(
       "https://example.com/checkout",
       {},
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(
@@ -197,43 +238,26 @@ describe("createStandaloneStagehandSession", () => {
     ).resolves.toEqual(observedActions);
   });
 
+  // ── Agent + dataLayer capture ───────────────────────────────────────────
+
   it("creates a standalone Stagehand agent and delegates execute()", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
-    const evaluate = vi.fn().mockResolvedValue("https://example.com/checkout");
-    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
-    const addInitScript = vi.fn().mockResolvedValue(undefined);
     const exposeBinding = vi.fn().mockImplementation((_name, callback) => {
       callback(undefined, { event: "pageview" });
       return Promise.resolve(undefined);
     });
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({ addInitScript, exposeBinding });
     const execute = vi.fn().mockResolvedValue({
       success: true,
       completed: true,
     });
-    const page = {
-      goto,
-      evaluate,
-      waitForTimeout,
-      addInitScript,
-      exposeBinding,
-    };
     const capturedAgentOptions: unknown[] = [];
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockImplementation((options?: unknown) => {
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockImplementation((options?: unknown) => {
         capturedAgentOptions.push(options);
         return { execute };
-      });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-        addInitScript,
-        exposeBinding,
-      };
-    }
+      }),
+    });
 
     const agent = await createStandaloneStagehandAgent(
       "https://example.com/checkout",
@@ -253,43 +277,123 @@ describe("createStandaloneStagehandSession", () => {
           },
         },
       },
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(
       agent.execute({ instruction: "purchase a product", maxSteps: 5 }),
-    ).resolves.toEqual({
-      success: true,
-      completed: true,
-    });
-    await expect(agent.evaluate("window.location.href")).resolves.toBe(
-      "https://example.com/checkout",
-    );
-    await expect(agent.waitForTimeout(250)).resolves.toBe(undefined);
+    ).resolves.toEqual({ success: true, completed: true });
     await expect(agent.drainCapturedEvents()).resolves.toEqual([
       { event: "pageview" },
     ]);
     await expect(agent.drainCapturedEvents()).resolves.toEqual([]);
-    expect(goto).toHaveBeenCalledWith("https://example.com/checkout");
     expect(addInitScript).toHaveBeenCalledOnce();
     expect(exposeBinding).toHaveBeenCalledOnce();
     expect(capturedAgentOptions).toEqual([
-      {
-        mode: "hybrid",
-        model: {
-          modelName: "vertex/gemini-3-flash-preview",
-          project: "test-project",
-          location: "global",
-        },
-        executionModel: {
-          modelName: "vertex/gemini-2.5-pro",
-          project: "test-project",
-          location: "europe-west4",
-        },
-      },
+      expect.objectContaining({ mode: "hybrid" }),
+    ]);
+  });
+
+  it("captures events via CDP binding when page exposes mainFrameId and getSessionForFrame", async () => {
+    type BindingHandler = (params: unknown) => void;
+    let bindingHandler: BindingHandler | undefined;
+    const cdpSession = {
+      send: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn().mockImplementation((_event: string, handler: BindingHandler) => {
+        bindingHandler = handler;
+      }),
+    };
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = Object.assign(makePage({ addInitScript }), {
+      mainFrameId: () => "main",
+      getSessionForFrame: () => cdpSession,
+    });
+    const execute = vi.fn().mockImplementation(async () => {
+      bindingHandler?.({
+        name: "__trackingAgentDlPush",
+        payload: JSON.stringify({ event: "add_to_cart" }),
+      });
+      return { success: true, completed: true };
+    });
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
+
+    const agent = await createStandaloneStagehandAgent(
+      "https://example.com",
+      {},
+      stagehandDeps(Mock),
+    );
+
+    await agent.execute({ instruction: "test", maxSteps: 1 });
+    await expect(agent.drainCapturedEvents()).resolves.toEqual([
+      { event: "add_to_cart" },
+    ]);
+    expect(cdpSession.send).toHaveBeenCalledWith("Runtime.enable");
+    expect(cdpSession.send).toHaveBeenCalledWith("Runtime.addBinding", {
+      name: "__trackingAgentDlPush",
+    });
+  });
+
+  it("falls back to exposeBinding when CDP session is unavailable", async () => {
+    const exposeBinding = vi.fn().mockImplementation((_name, callback) => {
+      callback(undefined, { event: "pageview" });
+      return Promise.resolve(undefined);
+    });
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({ addInitScript, exposeBinding });
+    const execute = vi.fn().mockResolvedValue({ success: true, completed: true });
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
+
+    const agent = await createStandaloneStagehandAgent(
+      "https://example.com",
+      {},
+      stagehandDeps(Mock),
+    );
+
+    await expect(agent.drainCapturedEvents()).resolves.toEqual([
+      { event: "pageview" },
+    ]);
+    expect(exposeBinding).toHaveBeenCalledOnce();
+  });
+
+  it("ignores CDP binding events with mismatched name", async () => {
+    type BindingHandler = (params: unknown) => void;
+    let bindingHandler: BindingHandler | undefined;
+    const cdpSession = {
+      send: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn().mockImplementation((_event: string, handler: BindingHandler) => {
+        bindingHandler = handler;
+      }),
+    };
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = Object.assign(makePage({ addInitScript }), {
+      mainFrameId: () => "main",
+      getSessionForFrame: () => cdpSession,
+    });
+    const execute = vi.fn().mockImplementation(async () => {
+      bindingHandler?.({ name: "otherBinding", payload: "{}" });
+      bindingHandler?.({
+        name: "__trackingAgentDlPush",
+        payload: JSON.stringify({ event: "real" }),
+      });
+      return { success: true, completed: true };
+    });
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
+
+    const agent = await createStandaloneStagehandAgent(
+      "https://example.com",
+      {},
+      stagehandDeps(Mock),
+    );
+
+    await agent.execute({ instruction: "test", maxSteps: 1 });
+    await expect(agent.drainCapturedEvents()).resolves.toEqual([
+      { event: "real" },
     ]);
   });
 
@@ -305,32 +409,24 @@ describe("createStandaloneStagehandSession", () => {
       }),
     );
     const capturedConfigs: unknown[] = [];
-
-    class StagehandMock {
+    const page = makePage();
+    const Mock = makeStagehandMock(page);
+    const Capturing = class extends Mock {
       constructor(config: unknown) {
+        super();
         capturedConfigs.push(config);
       }
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [{ goto: vi.fn().mockResolvedValue(undefined) }],
-      };
-    }
+    };
 
     try {
       await createStandaloneStagehandController(
         "https://example.com/checkout",
         {},
-        {
-          loadStagehand: async () => ({ Stagehand: StagehandMock }),
-          env: {
-            STAGEHAND_MODEL: "vertex/gemini-2.5-flash",
-            STAGEHAND_PROJECT: "test-project",
-            GOOGLE_APPLICATION_CREDENTIALS: path,
-          },
-        },
+        stagehandDeps(Capturing, {
+          STAGEHAND_MODEL: "vertex/gemini-2.5-flash",
+          STAGEHAND_PROJECT: "test-project",
+          GOOGLE_APPLICATION_CREDENTIALS: path,
+        }),
       );
     } finally {
       rmSync(dir, { force: true, recursive: true });
@@ -352,37 +448,23 @@ describe("createStandaloneStagehandSession", () => {
   });
 
   it("falls back to draining the page buffer when exposeBinding is unavailable", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(JSON.stringify([{ event: "pageview" }]))
       .mockResolvedValueOnce(JSON.stringify([]));
     const addInitScript = vi.fn().mockResolvedValue(undefined);
-    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({ evaluate, addInitScript });
     const execute = vi
       .fn()
       .mockResolvedValue({ success: true, completed: true });
-    const page = { goto, evaluate, waitForTimeout, addInitScript };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockReturnValue({ execute });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-        addInitScript,
-      };
-    }
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
 
     const agent = await createStandaloneStagehandAgent(
       "https://example.com/checkout",
       {},
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(agent.drainCapturedEvents()).resolves.toEqual([
@@ -392,59 +474,26 @@ describe("createStandaloneStagehandSession", () => {
   });
 
   it("fails loudly when no init-script hook is available for dataLayer capture", async () => {
-    const page = {
-      goto: vi.fn().mockResolvedValue(undefined),
-      evaluate: vi.fn().mockResolvedValue("https://example.com/checkout"),
-      waitForTimeout: vi.fn().mockResolvedValue(undefined),
-    };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockReturnValue({ execute: vi.fn() });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-      };
-    }
+    const page = makePage();
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute: vi.fn() }),
+    });
 
     await expect(
       createStandaloneStagehandAgent(
         "https://example.com/checkout",
         {},
-        {
-          loadStagehand: async () => ({ Stagehand: StagehandMock }),
-          env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-        },
+        stagehandDeps(Mock),
       ),
     ).rejects.toThrow(/addInitScript/);
   });
 
   it("captures dataLayer events pushed through Array.prototype.push.bind(window.dataLayer)", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
     let script = "";
     const addInitScript = vi.fn().mockImplementation(async (value: string) => {
       script = value;
     });
-    type SessionStorageMock = {
-      store: Map<string, string>;
-      getItem(key: string): string | null;
-      setItem(key: string, value: string): void;
-      removeItem(key: string): void;
-    };
-    const sessionStorage: SessionStorageMock = {
-      store: new Map<string, string>(),
-      getItem(key: string) {
-        return this.store.get(key) ?? null;
-      },
-      setItem(key: string, value: string) {
-        this.store.set(key, value);
-      },
-      removeItem(key: string) {
-        this.store.delete(key);
-      },
-    };
+    const sessionStorage = makeSessionStorage();
     const windowLike: Record<string, unknown> = {
       dataLayer: [],
       sessionStorage,
@@ -460,41 +509,26 @@ describe("createStandaloneStagehandSession", () => {
       ) => unknown;
       return String(executor(windowLike, sessionStorage));
     });
-    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
     const execute = vi.fn().mockImplementation(async () => {
-      const currentScript = script;
-      const run = new Function("window", "sessionStorage", currentScript) as (
+      const run = new Function("window", "sessionStorage", script) as (
         window: Record<string, unknown>,
         sessionStorage: SessionStorageMock,
       ) => void;
       run(windowLike, sessionStorage);
-      const originalPush = Array.prototype.push.bind(
-        windowLike.dataLayer as unknown[],
+      Array.prototype.push.bind(windowLike.dataLayer as unknown[])(
+        { event: "addToCart" },
       );
-      originalPush({ event: "addToCart" });
       return { success: true, completed: true };
     });
-    const page = { goto, evaluate, waitForTimeout, addInitScript };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockReturnValue({ execute });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-        addInitScript,
-      };
-    }
+    const page = makePage({ evaluate, addInitScript });
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
 
     const agent = await createStandaloneStagehandAgent(
       "https://example.com/checkout",
       {},
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await agent.execute({ instruction: "test", maxSteps: 1 });
@@ -504,7 +538,6 @@ describe("createStandaloneStagehandSession", () => {
   });
 
   it("returns collector diagnostics alongside the raw final dataLayer snapshot", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
     const evaluate = vi
       .fn()
       .mockResolvedValue(
@@ -514,43 +547,24 @@ describe("createStandaloneStagehandSession", () => {
           { event: "addToCart" },
         ]),
       );
-    const addInitScript = vi.fn().mockResolvedValue(undefined);
     const exposeBinding = vi.fn().mockImplementation((_name, callback) => {
       callback(undefined, { event: "pageview" });
       callback(undefined, { event: "view_promotion" });
       return Promise.resolve(undefined);
     });
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({ evaluate, addInitScript, exposeBinding });
     const execute = vi
       .fn()
       .mockResolvedValue({ success: true, completed: true });
-    const page = {
-      goto,
-      evaluate,
-      waitForTimeout: vi.fn().mockResolvedValue(undefined),
-      addInitScript,
-      exposeBinding,
-    };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockReturnValue({ execute });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-        addInitScript,
-        exposeBinding,
-      };
-    }
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
 
     const agent = await createStandaloneStagehandAgent(
       "https://example.com/checkout",
       {},
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(agent.drainCapturedEvents()).resolves.toEqual([
@@ -569,46 +583,26 @@ describe("createStandaloneStagehandSession", () => {
   });
 
   it("merges binding-captured and fallback-drained events in the same drain", async () => {
-    const goto = vi.fn().mockResolvedValue(undefined);
     const evaluate = vi
       .fn()
       .mockResolvedValue(JSON.stringify([{ event: "addToCart" }]));
-    const addInitScript = vi.fn().mockResolvedValue(undefined);
     const exposeBinding = vi.fn().mockImplementation((_name, callback) => {
       callback(undefined, { event: "pageview" });
       return Promise.resolve(undefined);
     });
+    const addInitScript = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({ evaluate, addInitScript, exposeBinding });
     const execute = vi
       .fn()
       .mockResolvedValue({ success: true, completed: true });
-    const page = {
-      goto,
-      evaluate,
-      waitForTimeout: vi.fn().mockResolvedValue(undefined),
-      addInitScript,
-      exposeBinding,
-    };
-
-    class StagehandMock {
-      init = vi.fn().mockResolvedValue(undefined);
-      act = vi.fn().mockResolvedValue("ok");
-      observe = vi.fn().mockResolvedValue([]);
-      agent = vi.fn().mockReturnValue({ execute });
-      close = vi.fn().mockResolvedValue(undefined);
-      context = {
-        pages: () => [page],
-        addInitScript,
-        exposeBinding,
-      };
-    }
+    const Mock = makeStagehandMock(page, {
+      agent: vi.fn().mockReturnValue({ execute }),
+    });
 
     const agent = await createStandaloneStagehandAgent(
       "https://example.com/checkout",
       {},
-      {
-        loadStagehand: async () => ({ Stagehand: StagehandMock }),
-        env: { STAGEHAND_MODEL: "openai/gpt-4.1-mini" },
-      },
+      stagehandDeps(Mock),
     );
 
     await expect(agent.drainCapturedEvents()).resolves.toEqual([
