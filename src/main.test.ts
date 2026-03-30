@@ -295,6 +295,38 @@ describe("main composition", () => {
     expect(stderrText).toContain("Validating events");
   });
 
+  it("includes event description in journey hint when available", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.loadRunState.mockResolvedValue({
+      eventSchemas: [
+        {
+          eventName: "addToCart",
+          schemaUrl: "https://example.com/addToCart.schema.json",
+          description: "Fired when a user adds a product to the cart after selecting a size.",
+        },
+      ],
+      loadSchemaFn: vi.fn(),
+    });
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      resume: false,
+      replay: false,
+      headless: false,
+    });
+
+    await main();
+
+    expect(mocks.runStagehandCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        journey_hint: expect.stringContaining(
+          "addToCart: Fired when a user adds a product to the cart after selecting a size.",
+        ),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("loads credentials and threads them into the journey hint when available", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({

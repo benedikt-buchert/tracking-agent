@@ -32,12 +32,19 @@ function buildJourneyHint(
   eventSchemas: EventSchema[],
   credentialsSummary: string,
 ): string {
-  const importantEvents = eventSchemas.map((schema) => schema.eventName);
-  const base =
-    importantEvents.length > 0
-      ? `Reach and trigger the important tracked events on this site, especially: ${importantEvents.join(", ")}.`
-      : "Explore the site and trigger the important tracked interaction.";
-  return credentialsSummary ? `${base} ${credentialsSummary}` : base;
+  if (eventSchemas.length === 0) {
+    const base = "Explore the site and trigger the important tracked interaction.";
+    return credentialsSummary ? `${base} ${credentialsSummary}` : base;
+  }
+  const eventLines = eventSchemas
+    .map((schema) =>
+      schema.description
+        ? `- ${schema.eventName}: ${schema.description}`
+        : `- ${schema.eventName}`,
+    )
+    .join("\n");
+  const base = `Reach and trigger the following tracked events on this site:\n${eventLines}`;
+  return credentialsSummary ? `${base}\n${credentialsSummary}` : base;
 }
 
 function buildStagehandCase(
