@@ -5,8 +5,6 @@ coverage/
 reports/
 tracking-reports/
 harness/results/
-.tracking-agent-playbook.json
-.tracking-agent-session.json
 .stryker-tmp/
 .DS_Store
 .cache/

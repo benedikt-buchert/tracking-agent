@@ -45,8 +45,8 @@ describe("buildHelpText", () => {
     --schema  URL of the JSON Schema to validate against
     --url     URL of the website to test
     --schemas-dir  Local directory of schema files (used instead of remote fetches)
-    --resume  Resume a previous session from .tracking-agent-session.json
     --credentials  Path to a JSON file with credential fields (see docs)
+    --cache-dir  Directory for the action cache (default: .cache)
     --headless  Run the browser in the background (no visible window)
     --quiet     Suppress all progress output (only errors and the final report)
     --verbose   Show detailed step-by-step progress

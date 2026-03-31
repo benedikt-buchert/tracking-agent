@@ -10,8 +10,8 @@ export function buildHelpText(): string {
     `    ${chalk.cyan("--schema")}  URL of the JSON Schema to validate against\n` +
     `    ${chalk.cyan("--url")}     URL of the website to test\n` +
     `    ${chalk.cyan("--schemas-dir")}  Local directory of schema files (used instead of remote fetches)\n` +
-    `    ${chalk.cyan("--resume")}  Resume a previous session from .tracking-agent-session.json\n` +
     `    ${chalk.cyan("--credentials")}  Path to a JSON file with credential fields (see docs)\n` +
+    `    ${chalk.cyan("--cache-dir")}  Directory for the action cache (default: .cache)\n` +
     `    ${chalk.cyan("--headless")}  Run the browser in the background (no visible window)\n` +
     `    ${chalk.cyan("--quiet")}     Suppress all progress output (only errors and the final report)\n` +
     `    ${chalk.cyan("--verbose")}   Show detailed step-by-step progress\n` +

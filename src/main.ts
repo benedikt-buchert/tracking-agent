@@ -13,20 +13,12 @@ import {
 } from "./browser/report.js";
 import { loadCredentials, formatCredentialsSummary } from "./credentials.js";
 import { runStagehandCase } from "./harness/stagehand-runner.js";
-import { loadRunState, saveRunSession } from "./run-state.js";
-import type { EventSchema } from "./schema.js";
+import { discoverEventSchemas, type EventSchema } from "./schema.js";
+import {
+  createLocalFirstLoader,
+  defaultLoadSchema,
+} from "./validation/index.js";
 import type { SignalBackedCase } from "./harness/types.js";
-
-function observedEventNames(events: unknown[]): string[] {
-  const names = new Set<string>();
-  for (const event of events) {
-    if (event && typeof event === "object") {
-      const name = (event as Record<string, unknown>)["event"];
-      if (typeof name === "string") names.add(name);
-    }
-  }
-  return [...names];
-}
 
 function buildJourneyHint(
   eventSchemas: EventSchema[],
@@ -129,11 +121,10 @@ export async function main(): Promise<void> {
   const {
     schemaUrl,
     targetUrl,
-    resume,
-    replay,
     headless,
     schemasDir,
     credentials,
+    cacheDir,
     quiet,
     verbose,
   } = args;
@@ -141,21 +132,26 @@ export async function main(): Promise<void> {
   const verbosity: Verbosity = quiet ? "quiet" : verbose ? "verbose" : "normal";
   const log = createLogger(verbosity);
 
-  const mode = replay ? "replay" : resume ? "resume" : "fresh";
   log.info(
     chalk.bold("\n  Tracking Agent\n") +
       chalk.dim(`  Schema: ${schemaUrl}\n  Target: ${targetUrl}\n`) +
-      (mode !== "fresh" ? chalk.dim(`  Mode: ${mode}\n`) : "") +
       (headless ? chalk.dim("  Browser: headless\n") : "") +
+      (cacheDir ? chalk.dim(`  Cache: ${cacheDir}\n`) : "") +
       "\n",
   );
 
-  const { eventSchemas, loadSchemaFn } = await loadRunState(
+  const loadSchemaFn = schemasDir
+    ? createLocalFirstLoader(schemasDir)
+    : defaultLoadSchema;
+
+  log.info(chalk.dim(`  Discovering schemas from ${schemaUrl}...\n`));
+  const eventSchemas = await discoverEventSchemas(
     schemaUrl,
-    resume,
-    schemasDir,
-    log,
+    "web-datalayer-js",
+    loadSchemaFn,
   );
+  log.info(chalk.dim(`  Found ${eventSchemas.length} event schema(s)\n\n`));
+
   const credentialStore = credentials
     ? await loadCredentials(credentials)
     : undefined;
@@ -171,18 +167,12 @@ export async function main(): Promise<void> {
   );
   const stagehandRun = await runStagehandCase(stagehandCase, {
     headless,
+    cacheDir,
     phaseTimeoutMs: resolvePhaseTimeoutMs(),
     variables: stagehandVariables,
     onInterventionNeeded: async () => promptForIntervention(),
   });
   const events = stagehandRun.accumulatedEvents;
-
-  await saveRunSession({
-    schemaUrl,
-    targetUrl,
-    eventSchemas,
-    foundEventNames: observedEventNames(events),
-  }).catch(() => {});
 
   log.verbose(chalk.dim("  Validating events...\n"));
   const results = await validateAll(

@@ -5,16 +5,12 @@ async function setupMainModule() {
 
   const resolveArgs = vi.fn();
   const printHelp = vi.fn();
-  const loadRunState = vi.fn().mockResolvedValue({
-    eventSchemas: [
-      {
-        eventName: "purchase",
-        schemaUrl: "https://example.com/purchase.schema.json",
-      },
-    ],
-    loadSchemaFn: vi.fn(),
-  });
-  const saveRunSession = vi.fn().mockResolvedValue(undefined);
+  const discoverEventSchemas = vi.fn().mockResolvedValue([
+    {
+      eventName: "purchase",
+      schemaUrl: "https://example.com/purchase.schema.json",
+    },
+  ]);
   const runStagehandCase = vi.fn().mockResolvedValue({
     accumulatedEvents: [{ event: "purchase" }],
     actionStepsTotal: 4,
@@ -32,11 +28,12 @@ async function setupMainModule() {
     printHelp,
     buildHelpText: vi.fn().mockReturnValue("HELP"),
   }));
-  vi.doMock("./run-state.js", () => ({
-    loadRunState,
-    saveRunSession,
-    SESSION_FILE: ".tracking-agent-session.json",
-    PLAYBOOK_FILE: ".tracking-agent-playbook.json",
+  vi.doMock("./schema.js", () => ({
+    discoverEventSchemas,
+  }));
+  vi.doMock("./validation/index.js", () => ({
+    defaultLoadSchema: vi.fn(),
+    createLocalFirstLoader: vi.fn().mockReturnValue(vi.fn()),
   }));
   vi.doMock("./harness/stagehand-runner.js", () => ({
     runStagehandCase,
@@ -72,8 +69,7 @@ async function setupMainModule() {
     mocks: {
       resolveArgs,
       printHelp,
-      loadRunState,
-      saveRunSession,
+      discoverEventSchemas,
       runStagehandCase,
       validateAll,
       generateReport,
@@ -125,18 +121,15 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
     });
 
     await main();
 
-    expect(mocks.loadRunState).toHaveBeenCalledWith(
+    expect(mocks.discoverEventSchemas).toHaveBeenCalledWith(
       "https://example.com/schema.json",
-      false,
-      undefined,
-      expect.objectContaining({ verbosity: expect.any(String) }),
+      "web-datalayer-js",
+      expect.any(Function),
     );
     expect(mocks.runStagehandCase).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -154,38 +147,13 @@ describe("main composition", () => {
     expect(mocks.validateAll).toHaveBeenCalledTimes(1);
     expect(mocks.generateReport).toHaveBeenCalledTimes(1);
     expect(stdout).toHaveBeenCalledWith("REPORT");
-    expect(mocks.saveRunSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        schemaUrl: "https://example.com/schema.json",
-        targetUrl: "https://example.com",
-        eventSchemas: expect.any(Array),
-        foundEventNames: ["purchase"],
-      }),
-    );
   });
 
-  it("prints replay mode in the startup banner", async () => {
+  it("shows headless in the startup banner", async () => {
     const { main, mocks } = await setupMainModule();
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: true,
-      headless: false,
-    });
-
-    await main();
-
-    expect(stderr.mock.calls.join("")).toContain("Mode: replay");
-  });
-
-  it("shows resume and headless in the startup banner", async () => {
-    const { main, mocks } = await setupMainModule();
-    mocks.resolveArgs.mockResolvedValue({
-      schemaUrl: "https://example.com/schema.json",
-      targetUrl: "https://example.com",
-      resume: true,
-      replay: false,
       headless: true,
     });
 
@@ -194,8 +162,28 @@ describe("main composition", () => {
     const stderrText = stderr.mock.calls
       .map(([text]: [unknown]) => String(text))
       .join("");
-    expect(stderrText).toContain("Mode: resume");
     expect(stderrText).toContain("Browser: headless");
+  });
+
+  it("shows cache dir in the startup banner when provided", async () => {
+    const { main, mocks } = await setupMainModule();
+    mocks.resolveArgs.mockResolvedValue({
+      schemaUrl: "https://example.com/schema.json",
+      targetUrl: "https://example.com",
+      headless: false,
+      cacheDir: "agent-cache",
+    });
+
+    await main();
+
+    const stderrText = stderr.mock.calls
+      .map(([text]: [unknown]) => String(text))
+      .join("");
+    expect(stderrText).toContain("Cache: agent-cache");
+    expect(mocks.runStagehandCase).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ cacheDir: "agent-cache" }),
+    );
   });
 
   it("writes the saved report path when report persistence succeeds", async () => {
@@ -203,8 +191,6 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
     });
     mocks.saveReportFolder.mockResolvedValue("/tmp/report-dir");
@@ -220,8 +206,6 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
     });
     mocks.runStagehandCase.mockResolvedValue({
@@ -258,8 +242,6 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
       quiet: true,
       verbose: false,
@@ -279,8 +261,6 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
       quiet: false,
       verbose: true,
@@ -297,21 +277,16 @@ describe("main composition", () => {
 
   it("includes event description in journey hint when available", async () => {
     const { main, mocks } = await setupMainModule();
-    mocks.loadRunState.mockResolvedValue({
-      eventSchemas: [
-        {
-          eventName: "addToCart",
-          schemaUrl: "https://example.com/addToCart.schema.json",
-          description: "Fired when a user adds a product to the cart after selecting a size.",
-        },
-      ],
-      loadSchemaFn: vi.fn(),
-    });
+    mocks.discoverEventSchemas.mockResolvedValue([
+      {
+        eventName: "addToCart",
+        schemaUrl: "https://example.com/addToCart.schema.json",
+        description: "Fired when a user adds a product to the cart after selecting a size.",
+      },
+    ]);
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
     });
 
@@ -332,8 +307,6 @@ describe("main composition", () => {
     mocks.resolveArgs.mockResolvedValue({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: false,
       credentials: "./creds.json",
     });
@@ -366,8 +339,6 @@ describe("main composition", () => {
       mocks.resolveArgs.mockResolvedValue({
         schemaUrl: "https://example.com/schema.json",
         targetUrl: "https://example.com",
-        resume: false,
-        replay: false,
         headless: false,
       });
 

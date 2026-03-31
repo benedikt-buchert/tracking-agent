@@ -45,55 +45,13 @@ describe("parseArgs", () => {
   it("returns all boolean fields as false in the --help shortcircuit", () => {
     const result = parseArgs(["--help"]);
     expect(result.help).toBe(true);
-    expect(result.resume).toBe(false);
-    expect(result.replay).toBe(false);
     expect(result.headless).toBe(false);
+    expect(result.quiet).toBe(false);
+    expect(result.verbose).toBe(false);
   });
 
   it("returns help:false when no help flag", () => {
     expect(parseArgs([]).help).toBe(false);
-  });
-
-  it("sets resume:true when --resume flag is present", () => {
-    const result = parseArgs([
-      "--schema",
-      "https://example.com/s.json",
-      "--url",
-      "https://x.com",
-      "--resume",
-    ]);
-    expect(result.resume).toBe(true);
-  });
-
-  it("sets resume:false when --resume flag is absent", () => {
-    const result = parseArgs([
-      "--schema",
-      "https://example.com/s.json",
-      "--url",
-      "https://x.com",
-    ]);
-    expect(result.resume).toBe(false);
-  });
-
-  it("sets replay:true when --replay flag is present", () => {
-    const result = parseArgs([
-      "--schema",
-      "https://example.com/s.json",
-      "--url",
-      "https://x.com",
-      "--replay",
-    ]);
-    expect(result.replay).toBe(true);
-  });
-
-  it("sets replay:false when --replay flag is absent", () => {
-    const result = parseArgs([
-      "--schema",
-      "https://example.com/s.json",
-      "--url",
-      "https://x.com",
-    ]);
-    expect(result.replay).toBe(false);
   });
 
   it("sets headless:true when --headless flag is present", () => {
@@ -176,6 +134,28 @@ describe("parseArgs", () => {
     expect(result.credentials).toBeUndefined();
   });
 
+  it("parses --cache-dir into cacheDir", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--cache-dir",
+      "agent-cache",
+    ]);
+    expect(result.cacheDir).toBe("agent-cache");
+  });
+
+  it("defaults cacheDir to current directory when --cache-dir is absent", () => {
+    const result = parseArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+    ]);
+    expect(result.cacheDir).toBe(".cache");
+  });
+
   it("parses --quiet flag", () => {
     const result = parseArgs(["--schema", "s", "--url", "u", "--quiet"]);
     expect(result.quiet).toBe(true);
@@ -211,23 +191,11 @@ describe("resolveArgs", () => {
     expect(result).toEqual({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://mysite.com",
-      resume: false,
-      replay: false,
       headless: false,
       quiet: false,
       verbose: false,
+      cacheDir: ".cache",
     });
-  });
-
-  it("includes resume:true when --resume is passed", async () => {
-    const result = await resolveArgs([
-      "--schema",
-      "https://example.com/schema.json",
-      "--url",
-      "https://mysite.com",
-      "--resume",
-    ]);
-    expect(result?.resume).toBe(true);
   });
 
   it("prompts for missing --schema", async () => {
@@ -260,11 +228,10 @@ describe("resolveArgs", () => {
     expect(result).toEqual({
       schemaUrl: "https://example.com/schema.json",
       targetUrl: "https://example.com",
-      resume: false,
-      replay: false,
       headless: true,
       quiet: false,
       verbose: false,
+      cacheDir: ".cache",
     });
   });
 
@@ -275,52 +242,11 @@ describe("resolveArgs", () => {
     expect(result).toEqual({
       schemaUrl: "https://schema.json",
       targetUrl: "https://site.com",
-      resume: false,
-      replay: false,
       headless: false,
       quiet: false,
       verbose: false,
+      cacheDir: ".cache",
     });
-  });
-
-  it("includes replay:true when --replay is passed", async () => {
-    const result = await resolveArgs([
-      "--schema",
-      "https://example.com/schema.json",
-      "--url",
-      "https://mysite.com",
-      "--replay",
-    ]);
-    expect(result?.replay).toBe(true);
-  });
-
-  it("reads schemaUrl and targetUrl from playbook file when --replay is given without --schema/--url", async () => {
-    const playbookContent = JSON.stringify({
-      schemaUrl: "https://saved-schema.com/schema.json",
-      targetUrl: "https://saved-site.com",
-      steps: [],
-    });
-    const readFileFn = vi.fn().mockResolvedValue(playbookContent);
-    const result = await resolveArgs(["--replay"], undefined, readFileFn);
-    expect(readFileFn).toHaveBeenCalledWith(".tracking-agent-playbook.json");
-    expect(result?.schemaUrl).toBe("https://saved-schema.com/schema.json");
-    expect(result?.targetUrl).toBe("https://saved-site.com");
-    expect(result?.replay).toBe(true);
-  });
-
-  it("reads schemaUrl and targetUrl from session file when --resume is given without --schema/--url", async () => {
-    const sessionContent = JSON.stringify({
-      schemaUrl: "https://saved-schema.com/schema.json",
-      targetUrl: "https://saved-site.com",
-      eventSchemas: [],
-      messages: [],
-    });
-    const readFileFn = vi.fn().mockResolvedValue(sessionContent);
-    const result = await resolveArgs(["--resume"], undefined, readFileFn);
-    expect(readFileFn).toHaveBeenCalledWith(".tracking-agent-session.json");
-    expect(result?.schemaUrl).toBe("https://saved-schema.com/schema.json");
-    expect(result?.targetUrl).toBe("https://saved-site.com");
-    expect(result?.resume).toBe(true);
   });
 
   it("returns null in headless mode when schema or url is still missing", async () => {
@@ -330,156 +256,21 @@ describe("resolveArgs", () => {
     const result = await resolveArgs(["--headless"]);
     expect(result).toBeNull();
     expect(stderr).toHaveBeenCalled();
+    stderr.mockRestore();
   });
 
-  it("uses saved replay values in headless mode without prompting", async () => {
-    const prompt = vi.fn();
-    const readFileFn = vi.fn().mockResolvedValue(
-      JSON.stringify({
-        schemaUrl: "https://saved-schema.com/schema.json",
-        targetUrl: "https://saved-site.com",
-        steps: [],
-      }),
-    );
-
-    const result = await resolveArgs(
-      ["--replay", "--headless"],
-      prompt,
-      readFileFn,
-    );
-
-    expect(result).toEqual({
-      schemaUrl: "https://saved-schema.com/schema.json",
-      targetUrl: "https://saved-site.com",
-      resume: false,
-      replay: true,
-      headless: true,
-      quiet: false,
-      verbose: false,
-    });
-    expect(prompt).not.toHaveBeenCalled();
-  });
-
-  it("prompts only for values missing from the saved replay file", async () => {
-    const prompt = vi.fn().mockResolvedValue("https://prompted-site.com");
-    const readFileFn = vi.fn().mockResolvedValue(
-      JSON.stringify({
-        schemaUrl: "https://saved-schema.com/schema.json",
-      }),
-    );
-
-    const result = await resolveArgs(["--replay"], prompt, readFileFn);
-
-    expect(result).toEqual({
-      schemaUrl: "https://saved-schema.com/schema.json",
-      targetUrl: "https://prompted-site.com",
-      resume: false,
-      replay: true,
-      headless: false,
-      quiet: false,
-      verbose: false,
-    });
-    expect(prompt).toHaveBeenCalledTimes(1);
-    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Target URL"));
-  });
-
-  it("prefers CLI values over saved replay values", async () => {
-    const prompt = vi.fn();
-    const readFileFn = vi.fn().mockResolvedValue(
-      JSON.stringify({
-        schemaUrl: "https://saved-schema.com/schema.json",
-        targetUrl: "https://saved-site.com",
-      }),
-    );
-
-    const result = await resolveArgs(
-      ["--replay", "--schema", "https://cli-schema.com/schema.json"],
-      prompt,
-      readFileFn,
-    );
-
-    expect(result).toEqual({
-      schemaUrl: "https://cli-schema.com/schema.json",
-      targetUrl: "https://saved-site.com",
-      resume: false,
-      replay: true,
-      headless: false,
-      quiet: false,
-      verbose: false,
-    });
-    expect(prompt).not.toHaveBeenCalled();
-  });
-
-  it("does not read the saved file when both --schema and --url are already provided in replay mode", async () => {
-    const readFileFn = vi.fn();
-    const result = await resolveArgs(
-      [
-        "--replay",
-        "--schema",
-        "https://example.com/s.json",
-        "--url",
-        "https://example.com",
-      ],
-      undefined,
-      readFileFn,
-    );
-    expect(readFileFn).not.toHaveBeenCalled();
-    expect(result?.schemaUrl).toBe("https://example.com/s.json");
-    expect(result?.targetUrl).toBe("https://example.com");
-  });
-
-  it("falls back to prompting when loading the saved file fails", async () => {
-    const prompt = vi
-      .fn()
-      .mockResolvedValueOnce("https://prompted-schema.com/schema.json")
-      .mockResolvedValueOnce("https://prompted-site.com");
-    const readFileFn = vi.fn().mockRejectedValue(new Error("missing file"));
-
-    const result = await resolveArgs(["--resume"], prompt, readFileFn);
-
-    expect(result).toEqual({
-      schemaUrl: "https://prompted-schema.com/schema.json",
-      targetUrl: "https://prompted-site.com",
-      resume: true,
-      replay: false,
-      headless: false,
-      quiet: false,
-      verbose: false,
-    });
-    expect(prompt).toHaveBeenCalledTimes(2);
-  });
-
-  it("prompts for schemaUrl when replay file has no schemaUrl but has targetUrl", async () => {
-    // Covers L89 branch[2]: both parsed.schemaUrl and saved.schemaUrl are missing
-    const prompt = vi.fn().mockResolvedValue("https://prompted-schema.json");
-    const readFileFn = vi.fn().mockResolvedValue(
-      JSON.stringify({ targetUrl: "https://saved-site.com", steps: [] }),
-    );
-
-    const result = await resolveArgs(["--replay"], prompt, readFileFn);
-
-    expect(result?.schemaUrl).toBe("https://prompted-schema.json");
-    expect(result?.targetUrl).toBe("https://saved-site.com");
-    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Schema URL"));
-  });
-
-  it("uses CLI --url over saved targetUrl in replay mode", async () => {
-    // Covers L93 branch[0]: parsed.targetUrl is set
-    const readFileFn = vi.fn().mockResolvedValue(
-      JSON.stringify({
-        schemaUrl: "https://saved-schema.json",
-        targetUrl: "https://saved-site.com",
-        steps: [],
-      }),
-    );
-
-    const result = await resolveArgs(
-      ["--replay", "--url", "https://cli-site.com"],
-      undefined,
-      readFileFn,
-    );
-
-    expect(result?.targetUrl).toBe("https://cli-site.com");
+  it("returns null in headless mode when --schema is provided but --url is missing", async () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const result = await resolveArgs([
+      "--headless",
+      "--schema",
+      "https://example.com/schema.json",
+    ]);
+    expect(result).toBeNull();
+    expect(stderr).toHaveBeenCalled();
+    stderr.mockRestore();
   });
 
   it("passes --schemas-dir through to the resolved CliArgs", async () => {
@@ -494,18 +285,27 @@ describe("resolveArgs", () => {
     expect(result?.schemasDir).toBe("./local-schemas");
   });
 
-  it("returns null in headless mode when --schema is provided but --url is missing", async () => {
-    // Covers L118 branch[2]: headless=true, schemaUrl provided, targetUrl missing
-    const stderr = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
+  it("passes --cache-dir through to the resolved CliArgs", async () => {
     const result = await resolveArgs([
-      "--headless",
       "--schema",
       "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--cache-dir",
+      "agent-cache",
     ]);
-    expect(result).toBeNull();
-    expect(stderr).toHaveBeenCalled();
-    stderr.mockRestore();
+    expect(result?.cacheDir).toBe("agent-cache");
+  });
+
+  it("passes --credentials through to the resolved CliArgs", async () => {
+    const result = await resolveArgs([
+      "--schema",
+      "https://example.com/schema.json",
+      "--url",
+      "https://mysite.com",
+      "--credentials",
+      "./creds.json",
+    ]);
+    expect(result?.credentials).toBe("./creds.json");
   });
 });

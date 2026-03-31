@@ -37,6 +37,7 @@ type StagehandVariables = Record<
 interface RunStagehandCaseOptions {
   headless: boolean;
   createAgent?: CreateAgent;
+  cacheDir?: string;
   phaseTimeoutMs?: number;
   variables?: StagehandVariables;
   onInterventionNeeded?: (
@@ -205,6 +206,7 @@ export async function runStagehandCase(
       createStandaloneStagehandAgent(url, {
         headless: agentOptions.headless,
         agentOptions: agentOptions.agentOptions,
+        cacheDir: options.cacheDir,
       }));
 
   const agent = await createAgent(testCase.entry_url, {

@@ -170,6 +170,7 @@ type StagehandModule = {
     model: StagehandModelConfig;
     verbose: 0 | 1 | 2;
     experimental?: boolean;
+    cacheDir?: string;
     localBrowserLaunchOptions?: {
       headless?: boolean;
     };
@@ -597,6 +598,7 @@ export async function createStandaloneStagehandAgent(
   options: {
     headless?: boolean;
     agentOptions?: unknown;
+    cacheDir?: string;
   } = {},
   deps: Pick<StagehandDeps, "loadStagehand" | "env"> = defaultStagehandDeps,
 ): Promise<StandaloneStagehandAgent> {
@@ -605,6 +607,7 @@ export async function createStandaloneStagehandAgent(
   const stagehand = new Stagehand({
     env: "LOCAL",
     experimental,
+    cacheDir: options.cacheDir,
     localBrowserLaunchOptions: {
       headless: options.headless ?? true,
     },
